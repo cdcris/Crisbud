@@ -2,7 +2,7 @@ package android.com.crisbud.db
 
 
 data class StoredTransaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val date: String)
-data class StoredBudget(val category: String, val spent: Double, val limit: Double)
+data class StoredBudget(val id: Long, val category: String, val spent: Double, val limit: Double)
 data class StoredRecurring(val id: Long, val title: String, val category: String, val amount: Double, val dueDay: Long, val cadence: String)
 
 class BudgetRepository {
@@ -41,7 +41,7 @@ class BudgetRepository {
     fun categories(): List<Pair<String, String>> = q.selectCategories().executeAsList().map { it.name to it.icon }
 
     fun budgets(month: String): List<StoredBudget> = q.selectBudgetsForMonth(month).executeAsList().map {
-        StoredBudget(it.category, it.spent, it.limit_amount)
+        StoredBudget(it.id, it.category, it.spent, it.limit_amount)
     }
 
     fun recurring(): List<StoredRecurring> = q.selectRecurringItems().executeAsList().map {
@@ -59,8 +59,13 @@ class BudgetRepository {
 
     fun addCategory(name: String, icon: String = "•") = q.insertCategory(name, icon, false)
     fun addBudget(category: String, month: String, limit: Double) = q.insertBudget(category, month, limit)
+    fun updateBudget(id: Long, category: String, limit: Double) = q.updateBudget(category, limit, id)
+    fun deleteBudget(id: Long) = q.deleteBudget(id)
     fun addRecurring(title: String, category: String, amount: Double, dueDay: Long) =
         q.insertRecurringItem(title, category, amount, dueDay, "Monthly")
+    fun updateRecurring(id: Long, title: String, category: String, amount: Double, dueDay: Long) =
+        q.updateRecurringItem(title, category, amount, dueDay, id)
+    fun deleteRecurring(id: Long) = q.deleteRecurringItem(id)
 
     fun exportJson(): String {
         val tx = transactions().joinToString(",") { "{\"title\":\"${escape(it.title)}\",\"category\":\"${escape(it.category)}\",\"amount\":${it.amount},\"income\":${it.income},\"date\":\"${it.date}\"}" }

@@ -63,12 +63,21 @@ FROM Budget WHERE month = ? ORDER BY category;
 insertBudget:
 INSERT OR REPLACE INTO Budget(category, month, limit_amount) VALUES (?, ?, ?);
 
+updateBudget:
+UPDATE Budget SET category = ?, limit_amount = ? WHERE id = ?;
+
+deleteBudget:
+DELETE FROM Budget WHERE id = ?;
+
 selectRecurringItems:
 SELECT * FROM RecurringItem WHERE active = 1 ORDER BY due_day;
 
 insertRecurringItem:
 INSERT INTO RecurringItem(title, category, amount, due_day, cadence, active)
 VALUES (?, ?, ?, ?, ?, 1);
+
+updateRecurringItem:
+UPDATE RecurringItem SET title = ?, category = ?, amount = ?, due_day = ? WHERE id = ?;
 
 deleteRecurringItem:
 UPDATE RecurringItem SET active = 0 WHERE id = ?;

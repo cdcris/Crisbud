@@ -53,8 +53,8 @@ private enum class Screen(val title: String, val icon: ImageVector) {
 }
 
 private data class Transaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val date: String, val day: String)
-private data class Budget(val category: String, val spent: Double, val limit: Double, val icon: String)
-private data class Recurring(val title: String, val category: String, val amount: Double, val dueDay: Long)
+private data class Budget(val id: Long, val category: String, val spent: Double, val limit: Double, val icon: String)
+private data class Recurring(val id: Long, val title: String, val category: String, val amount: Double, val dueDay: Long)
 
 @Composable
 fun CrisbudApp() {
@@ -69,8 +69,8 @@ fun CrisbudApp() {
     val storedTransactions = remember(revision) { repository.transactions() }
     val currentMonthTransactions = remember(revision) { repository.transactions(month) }
     val categories = remember(revision) { repository.categories() }
-    val budgets = remember(revision) { repository.budgets(month).map { stored -> Budget(stored.category, stored.spent, stored.limit, categories.firstOrNull { it.first == stored.category }?.second ?: "•") } }
-    val recurring = remember(revision) { repository.recurring().map { Recurring(it.title, it.category, it.amount, it.dueDay) } }
+    val budgets = remember(revision) { repository.budgets(month).map { stored -> Budget(stored.id, stored.category, stored.spent, stored.limit, categories.firstOrNull { it.first == stored.category }?.second ?: "•") } }
+    val recurring = remember(revision) { repository.recurring().map { Recurring(it.id, it.title, it.category, it.amount, it.dueDay) } }
     val transactions = storedTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, if (it.date == today) "Today" else it.date) }
     val monthTransactions = currentMonthTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, if (it.date == today) "Today" else it.date) }
     val spent = monthTransactions.filter { !it.income }.sumOf { it.amount }
@@ -106,7 +106,11 @@ fun CrisbudApp() {
                 )
                 Screen.Budgets -> BudgetsScreen(padding, budgets, recurring, categories,
                     onAddBudget = { category, limit -> repository.addBudget(category, month, limit); revision++ },
-                    onAddRecurring = { title, category, amount, dueDay -> repository.addRecurring(title, category, amount, dueDay); revision++ })
+                    onEditBudget = { id, category, limit -> repository.updateBudget(id, category, limit); revision++ },
+                    onDeleteBudget = { id -> repository.deleteBudget(id); revision++ },
+                    onAddRecurring = { title, category, amount, dueDay -> repository.addRecurring(title, category, amount, dueDay); revision++ },
+                    onEditRecurring = { id, title, category, amount, dueDay -> repository.updateRecurring(id, title, category, amount, dueDay); revision++ },
+                    onDeleteRecurring = { id -> repository.deleteRecurring(id); revision++ })
                 Screen.Settings -> SettingsScreen(padding, categories, onAddCategory = { name -> repository.addCategory(name); revision++ }, onBackup = { showBackup = true })
             }
         }
@@ -183,6 +187,82 @@ private fun BudgetCard(budget: Budget) {
         LinearProgressIndicator(progress = { (budget.spent / budget.limit).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(7.dp), color = if (budget.spent / budget.limit > .85) orange else forest, trackColor = mint)
         Spacer(Modifier.height(8.dp)); Text("${money(budget.spent)} of ${money(budget.limit)}", color = muted, fontSize = 11.sp)
     }
+}
+
+@Composable
+private fun BudgetActionRow(
+    budget: Budget,
+    showActions: Boolean,
+    onSwipeStateChange: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val actionsWidth = 100.dp
+    val actionsWidthPx = with(density) { actionsWidth.toPx() }
+    val openThresholdPx = with(density) { 50.dp.toPx() }
+    var offsetX by remember(budget.id) { mutableFloatStateOf(0f) }
+    LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
+
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))) {
+        Row(
+            Modifier.align(Alignment.CenterEnd).width(actionsWidth),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp)).clickable(onClick = onEdit).padding(10.dp)) {
+                Icon(Icons.Default.Edit, contentDescription = "Edit ${budget.category} budget", tint = forest)
+            }
+            Spacer(Modifier.width(6.dp))
+            Box(Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp)).clickable(onClick = onDelete).padding(10.dp)) {
+                Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${budget.category} budget", tint = Color(0xFF8C1D18))
+            }
+        }
+        Box(
+            Modifier.fillMaxWidth()
+                .graphicsLayer { translationX = offsetX }
+                .pointerInput(budget.id, actionsWidthPx) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetX = (offsetX + dragAmount).coerceIn(-actionsWidthPx, 0f)
+                        },
+                        onDragEnd = {
+                            val open = offsetX <= -openThresholdPx
+                            offsetX = if (open) -actionsWidthPx else 0f
+                            onSwipeStateChange(open)
+                        }
+                    )
+                }
+        ) {
+            BudgetCard(budget)
+        }
+    }
+}
+
+@Composable
+private fun EditBudgetDialog(
+    budget: Budget,
+    categories: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (String, Double) -> Unit
+) {
+    var category by remember(budget.id) { mutableStateOf(budget.category) }
+    var amount by remember(budget.id) { mutableStateOf(budget.limit.toString()) }
+    var expanded by remember { mutableStateOf(false) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Edit category budget") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box {
+                OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category, color = ink) }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    categories.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { category = name; expanded = false }) }
+                }
+            }
+            OutlinedTextField(amount, { amount = it }, label = { Text("Monthly limit") }, prefix = { Text("₱") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+        }
+    }, confirmButton = {
+        Button(onClick = { amount.toDoubleOrNull()?.takeIf { it > 0 }?.let { onSave(category, it) } }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") }
+    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @Composable
@@ -323,21 +403,44 @@ private fun TransactionRow(
 }
 
 @Composable
-private fun BudgetsScreen(padding: PaddingValues, budgets: List<Budget>, recurring: List<Recurring>, categories: List<Pair<String, String>>, onAddBudget: (String, Double) -> Unit, onAddRecurring: (String, String, Double, Long) -> Unit) {
+private fun BudgetsScreen(padding: PaddingValues, budgets: List<Budget>, recurring: List<Recurring>, categories: List<Pair<String, String>>, onAddBudget: (String, Double) -> Unit, onEditBudget: (Long, String, Double) -> Unit, onDeleteBudget: (Long) -> Unit, onAddRecurring: (String, String, Double, Long) -> Unit, onEditRecurring: (Long, String, String, Double, Long) -> Unit, onDeleteRecurring: (Long) -> Unit) {
     var addBudget by remember { mutableStateOf(false) }
     var addRecurring by remember { mutableStateOf(false) }
+    var budgetToEdit by remember { mutableStateOf<Budget?>(null) }
+    var budgetToDelete by remember { mutableStateOf<Budget?>(null) }
+    var actionsForBudget by remember { mutableStateOf<Long?>(null) }
+    var recurringToEdit by remember { mutableStateOf<Recurring?>(null) }
+    var recurringToDelete by remember { mutableStateOf<Recurring?>(null) }
+    var actionsForRecurring by remember { mutableStateOf<Long?>(null) }
     LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(22.dp, 22.dp, 22.dp, 100.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
         item { Text("Your plan", fontSize = 28.sp, color = ink, fontWeight = FontWeight.Bold); Text("A little structure, a lot more ease.", color = muted, fontSize = 14.sp) }
         item { Column(Modifier.fillMaxWidth().background(mint, RoundedCornerShape(18.dp)).padding(18.dp)) { Text("MONTHLY TOTAL", color = forest, fontSize = 12.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.height(5.dp)); Text("${money(budgets.sumOf { it.spent })} spent of ${money(budgets.sumOf { it.limit })}", color = ink, fontSize = 20.sp, fontWeight = FontWeight.Bold); Text("${money((budgets.sumOf { it.limit } - budgets.sumOf { it.spent }).coerceAtLeast(0.0))} remaining", color = forest, fontSize = 13.sp) } }
         item { Text("Categories", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = ink) }
-        items(budgets) { BudgetCard(it) }
+        items(budgets, key = { "budget-${it.id}" }) { budget ->
+            BudgetActionRow(budget, actionsForBudget == budget.id,
+                onSwipeStateChange = { open -> actionsForBudget = if (open) budget.id else null },
+                onEdit = { actionsForBudget = null; budgetToEdit = budget },
+                onDelete = { actionsForBudget = null; budgetToDelete = budget })
+        }
         item { OutlinedButton(onClick = { addBudget = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("Add a category budget") } }
         item { Text("Recurring items", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = ink) }
-        items(recurring) { item -> RecurringRow(item.title, "${item.category} · due day ${item.dueDay}", item.amount, "↻") }
+        items(recurring, key = { "recurring-${it.id}" }) { item ->
+            RecurringActionRow(item, actionsForRecurring == item.id,
+                onSwipeStateChange = { open -> actionsForRecurring = if (open) item.id else null },
+                onEdit = { actionsForRecurring = null; recurringToEdit = item },
+                onDelete = { actionsForRecurring = null; recurringToDelete = item })
+        }
         item { OutlinedButton(onClick = { addRecurring = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("Add recurring item") } }
     }
     if (addBudget) SimpleEntryDialog(title = "New category budget", categories = categories.map { it.first }, amountLabel = "Monthly limit", onDismiss = { addBudget = false }) { category, _, amount -> onAddBudget(category, amount); addBudget = false }
+    budgetToEdit?.let { budget ->
+        val availableCategories = categories.map { it.first }.filter { name -> name == budget.category || budgets.none { it.category == name } }
+        EditBudgetDialog(budget, availableCategories, onDismiss = { budgetToEdit = null }) { category, limit -> onEditBudget(budget.id, category, limit); budgetToEdit = null }
+    }
+    budgetToDelete?.let { budget -> AlertDialog(onDismissRequest = { budgetToDelete = null }, title = { Text("Delete budget?") }, text = { Text("The ${budget.category} budget will be permanently removed.") }, confirmButton = { TextButton(onClick = { onDeleteBudget(budget.id); budgetToDelete = null }) { Text("Delete", color = MaterialTheme.colorScheme.error) } }, dismissButton = { TextButton(onClick = { budgetToDelete = null }) { Text("Cancel") } }) }
     if (addRecurring) RecurringEntryDialog(categories = categories.map { it.first }, onDismiss = { addRecurring = false }) { title, category, amount, dueDay -> onAddRecurring(title, category, amount, dueDay); addRecurring = false }
+    recurringToEdit?.let { item -> EditRecurringDialog(item, categories.map { it.first }, onDismiss = { recurringToEdit = null }) { title, category, amount, dueDay -> onEditRecurring(item.id, title, category, amount, dueDay); recurringToEdit = null } }
+    recurringToDelete?.let { item -> AlertDialog(onDismissRequest = { recurringToDelete = null }, title = { Text("Delete recurring item?") }, text = { Text("\"${item.title}\" will be removed from your recurring items.") }, confirmButton = { TextButton(onClick = { onDeleteRecurring(item.id); recurringToDelete = null }) { Text("Delete", color = MaterialTheme.colorScheme.error) } }, dismissButton = { TextButton(onClick = { recurringToDelete = null }) { Text("Cancel") } }) }
 }
 
 @Composable
@@ -347,6 +450,90 @@ private fun RecurringRow(name: String, detail: String, amount: Double, icon: Str
         Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(name, color = ink, fontWeight = FontWeight.SemiBold); Text(detail, color = muted, fontSize = 12.sp) }
         Text(money(amount), color = ink, fontWeight = FontWeight.Bold)
     }
+}
+
+@Composable
+private fun RecurringActionRow(
+    item: Recurring,
+    showActions: Boolean,
+    onSwipeStateChange: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val actionsWidth = 100.dp
+    val actionsWidthPx = with(density) { actionsWidth.toPx() }
+    val openThresholdPx = with(density) { 50.dp.toPx() }
+    var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
+    LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
+
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
+        Row(
+            Modifier.align(Alignment.CenterEnd).width(actionsWidth),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp)).clickable(onClick = onEdit).padding(10.dp)) {
+                Icon(Icons.Default.Edit, contentDescription = "Edit ${item.title}", tint = forest)
+            }
+            Spacer(Modifier.width(6.dp))
+            Box(Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp)).clickable(onClick = onDelete).padding(10.dp)) {
+                Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${item.title}", tint = Color(0xFF8C1D18))
+            }
+        }
+        Box(
+            Modifier.fillMaxWidth()
+                .graphicsLayer { translationX = offsetX }
+                .pointerInput(item.id, actionsWidthPx) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetX = (offsetX + dragAmount).coerceIn(-actionsWidthPx, 0f)
+                        },
+                        onDragEnd = {
+                            val open = offsetX <= -openThresholdPx
+                            offsetX = if (open) -actionsWidthPx else 0f
+                            onSwipeStateChange(open)
+                        }
+                    )
+                }
+        ) {
+            RecurringRow(item.title, "${item.category} · due day ${item.dueDay}", item.amount, "↻")
+        }
+    }
+}
+
+@Composable
+private fun EditRecurringDialog(
+    item: Recurring,
+    categories: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (String, String, Double, Long) -> Unit
+) {
+    var title by remember(item.id) { mutableStateOf(item.title) }
+    var category by remember(item.id) { mutableStateOf(item.category) }
+    var amount by remember(item.id) { mutableStateOf(item.amount.toString()) }
+    var dueDay by remember(item.id) { mutableStateOf(item.dueDay.toString()) }
+    var expanded by remember { mutableStateOf(false) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Edit recurring item") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            OutlinedTextField(title, { title = it }, label = { Text("Name") }, singleLine = true)
+            Box {
+                OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category, color = ink) }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    categories.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { category = name; expanded = false }) }
+                }
+            }
+            OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("₱") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+            OutlinedTextField(dueDay, { dueDay = it.filter(Char::isDigit).take(2) }, label = { Text("Day of month (1–31)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+        }
+    }, confirmButton = {
+        Button(onClick = {
+            val value = amount.toDoubleOrNull()
+            val day = dueDay.toLongOrNull()
+            if (title.isNotBlank() && value != null && value > 0 && day != null && day in 1..31) onSave(title.trim(), category, value, day)
+        }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") }
+    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @Composable
