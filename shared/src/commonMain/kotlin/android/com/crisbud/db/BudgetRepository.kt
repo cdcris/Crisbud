@@ -115,5 +115,33 @@ class BudgetRepository {
         return "{\"transactions\":[$tx],\"wallets\":[$walletItems],\"categories\":[$cats],\"budgets\":[${q.exportBudgets().executeAsList().joinToString(",") { "{\"category\":\"${escape(it.category)}\",\"month\":\"${it.month}\",\"limit\":${it.limit_amount}}" }}],\"recurring\":[$recurringItems]}"
     }
 
+    fun exportSql(): String = buildString {
+        appendLine("-- Crisbud SQL backup v1")
+        appendLine("BEGIN TRANSACTION;")
+        appendLine("DELETE FROM Entries;")
+        appendLine("DELETE FROM Budget;")
+        appendLine("DELETE FROM RecurringItem;")
+        appendLine("DELETE FROM Category;")
+        appendLine("DELETE FROM Wallet;")
+        q.exportCategories().executeAsList().forEach { appendLine("INSERT INTO Category(name, icon, is_income) VALUES (" + sqlText(it.name) + ", " + sqlText(it.icon) + ", " + (if (it.is_income) 1 else 0) + ");") }
+        walletBalances().forEach { appendLine("INSERT INTO Wallet(name, balance) VALUES (" + sqlText(it.name) + ", " + it.balance + ");") }
+        q.exportTransactions().executeAsList().forEach { appendLine("INSERT INTO Entries(id, title, category, amount, income, date, wallet) VALUES (" + it.id + ", " + sqlText(it.title) + ", " + sqlText(it.category) + ", " + it.amount + ", " + (if (it.income) 1 else 0) + ", " + sqlText(it.date) + ", " + sqlText(it.wallet) + ");") }
+        q.exportBudgets().executeAsList().forEach { appendLine("INSERT INTO Budget(id, category, month, limit_amount) VALUES (" + it.id + ", " + sqlText(it.category) + ", " + sqlText(it.month) + ", " + it.limit_amount + ");") }
+        q.exportRecurringItems().executeAsList().forEach { appendLine("INSERT INTO RecurringItem(id, title, category, amount, due_day, cadence, active) VALUES (" + it.id + ", " + sqlText(it.title) + ", " + sqlText(it.category) + ", " + it.amount + ", " + it.due_day + ", " + sqlText(it.cadence) + ", " + (if (it.active) 1 else 0) + ");") }
+        appendLine("COMMIT;")
+    }
+
+    fun importSql(sql: String) {
+        require(sql.startsWith("-- Crisbud SQL backup v1")) { "Choose a Crisbud SQL backup." }
+        val statements = sql.substringAfter('\n').split(';').map(String::trim).filter(String::isNotEmpty)
+        val allowed = Regex("(?is)^(BEGIN TRANSACTION|COMMIT|DELETE FROM (Entries|Budget|RecurringItem|Category|Wallet)|INSERT INTO (Entries|Budget|RecurringItem|Category|Wallet)\\s*\\([a-z_, ]+\\)\\s*VALUES\\s*\\(.*\\))$")
+        require(statements.all { allowed.matches(it) }) { "The SQL file contains unsupported statements." }
+        val driver = createDatabaseDriver()
+        try { statements.filterNot { it.equals("BEGIN TRANSACTION", true) || it.equals("COMMIT", true) }.forEach { driver.execute(null, it, 0) } }
+        finally { driver.close() }
+    }
+
+    private fun sqlText(value: String): String = "'" + value.replace("'", "''") + "'"
+
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 }

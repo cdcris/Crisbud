@@ -39,6 +39,7 @@ import android.com.crisbud.db.StoredWallet
 import android.com.crisbud.db.currentIsoDate
 import android.com.crisbud.db.epochMillisFromIsoDate
 import android.com.crisbud.db.isoDateFromEpochMillis
+import android.com.crisbud.db.SqlFileActions
 
 private val forest = Color(0xFF315D4B)
 private val mint = Color(0xFFDDEEE3)
@@ -60,7 +61,7 @@ private data class Recurring(val id: Long, val title: String, val category: Stri
 fun CrisbudApp() {
     var screen by remember { mutableStateOf(Screen.Overview) }
     var showEntry by remember { mutableStateOf(false) }
-    var showBackup by remember { mutableStateOf(false) }
+    var fileMessage by remember { mutableStateOf<String?>(null) }
     var revision by remember { mutableIntStateOf(0) }
     val repository = remember { BudgetRepository() }
     val today = remember { currentIsoDate() }
@@ -124,7 +125,9 @@ fun CrisbudApp() {
                     onRenameWallet = { oldName, newName -> repository.renameWallet(oldName, newName).also { if (it) revision++ } },
                     onDeleteWallet = { name -> repository.deleteWallet(name).also { if (it) revision++ } },
                     onSetWalletBalance = { name, balance -> repository.updateWalletBalance(name, balance); revision++ },
-                    onBackup = { showBackup = true }
+                    sql = { repository.exportSql() },
+                    onSqlImported = { sql -> runCatching { repository.importSql(sql); revision++ }.onFailure { fileMessage = it.message ?: "Import failed." } },
+                    onFileMessage = { fileMessage = it }
                 )
             }
         }
@@ -133,10 +136,7 @@ fun CrisbudApp() {
             revision++
             showEntry = false
         })
-        if (showBackup) AlertDialog(onDismissRequest = { showBackup = false },
-            title = { Text("Your backup is ready") },
-            text = { Text("Your SQLite data is ready to export as JSON. ${transactions.size} transactions, ${budgets.size} budgets and ${recurring.size} recurring items are included.\n\n${repository.exportJson().take(1600)}") },
-            confirmButton = { TextButton(onClick = { showBackup = false }) { Text("Done") } })
+        if (fileMessage != null) AlertDialog(onDismissRequest = { fileMessage = null }, title = { Text("Data transfer") }, text = { Text(fileMessage!!) }, confirmButton = { TextButton(onClick = { fileMessage = null }) { Text("Done") } })
     }
 }
 
@@ -559,7 +559,9 @@ private fun SettingsScreen(
     onRenameWallet: (String, String) -> Boolean,
     onDeleteWallet: (String) -> Boolean,
     onSetWalletBalance: (String, Double) -> Unit,
-    onBackup: () -> Unit
+    sql: () -> String,
+    onSqlImported: (String) -> Unit,
+    onFileMessage: (String) -> Unit
 ) {
     var manageCategories by remember { mutableStateOf(false) }
     var manageWallets by remember { mutableStateOf(false) }
@@ -574,8 +576,8 @@ private fun SettingsScreen(
         }
         SettingsCard(Icons.Default.Savings, "Monthly plan", "Adjust your budget for this month")
         SettingsCard(Icons.Default.ReceiptLong, "Recurring items", "Keep regular bills in view")
-        Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).clickable(onClick = onBackup).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Settings, null, tint = forest); Column(Modifier.weight(1f).padding(start = 13.dp)) { Text("Export & backup", color = ink, fontWeight = FontWeight.SemiBold); Text("Take a copy of your budget data", color = muted, fontSize = 12.sp) }; Text("›", color = muted, fontSize = 24.sp)
+        Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+            SqlFileActions(sql, onSqlImported, onFileMessage)
         }
         Spacer(Modifier.weight(1f)); Text("Your money stays yours. Private by design.", color = muted, fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
     }
@@ -1132,3 +1134,5 @@ private fun CrisbudTheme(content: @Composable () -> Unit) {
     )
     MaterialTheme(colorScheme = colors, typography = typography, shapes = shapes, content = content)
 }
+
+
