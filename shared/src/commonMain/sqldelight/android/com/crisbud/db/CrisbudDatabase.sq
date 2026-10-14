@@ -1,0 +1,86 @@
+CREATE TABLE Entries (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL,
+  amount REAL NOT NULL,
+  income INTEGER AS kotlin.Boolean NOT NULL,
+  date TEXT NOT NULL
+);
+
+CREATE TABLE Category (
+  name TEXT NOT NULL PRIMARY KEY,
+  icon TEXT NOT NULL DEFAULT '•',
+  is_income INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0
+);
+
+CREATE TABLE Budget (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  category TEXT NOT NULL,
+  month TEXT NOT NULL,
+  limit_amount REAL NOT NULL,
+  UNIQUE(category, month)
+);
+
+CREATE TABLE RecurringItem (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL,
+  amount REAL NOT NULL,
+  due_day INTEGER NOT NULL,
+  cadence TEXT NOT NULL DEFAULT 'Monthly',
+  active INTEGER AS kotlin.Boolean NOT NULL DEFAULT 1
+);
+
+selectTransactions:
+SELECT * FROM Entries ORDER BY date DESC, id DESC;
+
+selectTransactionsForMonth:
+SELECT * FROM Entries WHERE substr(date, 1, 7) = ? ORDER BY date DESC, id DESC;
+
+insertTransaction:
+INSERT INTO Entries(title, category, amount, income, date)
+VALUES (?, ?, ?, ?, ?);
+
+updateTransaction:
+UPDATE Entries SET title = ?, category = ?, amount = ?, income = ? WHERE id = ?;
+
+deleteTransaction:
+DELETE FROM Entries WHERE id = ?;
+
+selectCategories:
+SELECT * FROM Category ORDER BY name;
+
+insertCategory:
+INSERT OR IGNORE INTO Category(name, icon, is_income) VALUES (?, ?, ?);
+
+selectBudgetsForMonth:
+SELECT Budget.id, Budget.category, Budget.month, Budget.limit_amount,
+  COALESCE((SELECT SUM(Entries.amount) FROM Entries
+    WHERE Entries.category = Budget.category AND Entries.income = 0
+      AND substr(Entries.date, 1, 7) = Budget.month), 0.0) AS spent
+FROM Budget WHERE month = ? ORDER BY category;
+
+insertBudget:
+INSERT OR REPLACE INTO Budget(category, month, limit_amount) VALUES (?, ?, ?);
+
+selectRecurringItems:
+SELECT * FROM RecurringItem WHERE active = 1 ORDER BY due_day;
+
+insertRecurringItem:
+INSERT INTO RecurringItem(title, category, amount, due_day, cadence, active)
+VALUES (?, ?, ?, ?, ?, 1);
+
+deleteRecurringItem:
+UPDATE RecurringItem SET active = 0 WHERE id = ?;
+
+exportTransactions:
+SELECT * FROM Entries ORDER BY id;
+
+exportBudgets:
+SELECT * FROM Budget ORDER BY month, category;
+
+exportCategories:
+SELECT * FROM Category ORDER BY name;
+
+exportRecurringItems:
+SELECT * FROM RecurringItem ORDER BY id;
