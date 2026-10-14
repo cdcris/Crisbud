@@ -53,6 +53,31 @@ SELECT * FROM Category ORDER BY name;
 insertCategory:
 INSERT OR IGNORE INTO Category(name, icon, is_income) VALUES (?, ?, ?);
 
+renameCategory:
+UPDATE Category SET name = ? WHERE name = ?;
+
+renameEntryCategory:
+UPDATE Entries SET category = ? WHERE category = ?;
+
+renameBudgetCategory:
+UPDATE Budget SET category = ? WHERE category = ?;
+
+renameRecurringCategory:
+UPDATE RecurringItem SET category = ? WHERE category = ?;
+
+categoryUsageCount:
+SELECT (SELECT COUNT(*) FROM Entries WHERE category = ?) +
+  (SELECT COUNT(*) FROM Budget WHERE category = ?) +
+  (SELECT COUNT(*) FROM RecurringItem WHERE category = ?) AS usage_count;
+
+countCategoryBudgetConflicts:
+SELECT COUNT(*) AS conflict_count FROM Budget old
+JOIN Budget existing ON existing.month = old.month
+WHERE old.category = ? AND existing.category = ?;
+
+deleteCategory:
+DELETE FROM Category WHERE name = ?;
+
 selectBudgetsForMonth:
 SELECT Budget.id, Budget.category, Budget.month, Budget.limit_amount,
   COALESCE((SELECT SUM(Entries.amount) FROM Entries

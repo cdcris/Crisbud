@@ -58,6 +58,23 @@ class BudgetRepository {
         q.updateTransaction(title, category, amount, income, date, id)
 
     fun addCategory(name: String, icon: String = "•") = q.insertCategory(name, icon, false)
+    fun renameCategory(oldName: String, newName: String): Boolean {
+        if (oldName == newName) return true
+        if (q.selectCategories().executeAsList().any { it.name.equals(newName, ignoreCase = true) }) return false
+        if (q.countCategoryBudgetConflicts(oldName, newName).executeAsOne() > 0) return false
+        q.renameEntryCategory(newName, oldName)
+        q.renameBudgetCategory(newName, oldName)
+        q.renameRecurringCategory(newName, oldName)
+        q.renameCategory(newName, oldName)
+        return true
+    }
+
+    fun deleteCategory(name: String): Boolean {
+        if (q.categoryUsageCount(name, name, name).executeAsOne() > 0) return false
+        q.deleteCategory(name)
+        return true
+    }
+
     fun addBudget(category: String, month: String, limit: Double) = q.insertBudget(category, month, limit)
     fun updateBudget(id: Long, category: String, limit: Double) = q.updateBudget(category, limit, id)
     fun deleteBudget(id: Long) = q.deleteBudget(id)

@@ -111,7 +111,14 @@ fun CrisbudApp() {
                     onAddRecurring = { title, category, amount, dueDay -> repository.addRecurring(title, category, amount, dueDay); revision++ },
                     onEditRecurring = { id, title, category, amount, dueDay -> repository.updateRecurring(id, title, category, amount, dueDay); revision++ },
                     onDeleteRecurring = { id -> repository.deleteRecurring(id); revision++ })
-                Screen.Settings -> SettingsScreen(padding, categories, onAddCategory = { name -> repository.addCategory(name); revision++ }, onBackup = { showBackup = true })
+                Screen.Settings -> SettingsScreen(
+                    padding,
+                    categories,
+                    onAddCategory = { name -> repository.addCategory(name); revision++ },
+                    onRenameCategory = { oldName, newName -> repository.renameCategory(oldName, newName).also { if (it) revision++ } },
+                    onDeleteCategory = { name -> repository.deleteCategory(name).also { if (it) revision++ } },
+                    onBackup = { showBackup = true }
+                )
             }
         }
         if (showEntry) AddTransactionDialog(categoryNames = categories.map { it.first }, onDismiss = { showEntry = false }, onSave = { item ->
@@ -537,13 +544,20 @@ private fun EditRecurringDialog(
 }
 
 @Composable
-private fun SettingsScreen(padding: PaddingValues, categories: List<Pair<String, String>>, onAddCategory: (String) -> Unit, onBackup: () -> Unit) {
-    var addCategory by remember { mutableStateOf(false) }
+private fun SettingsScreen(
+    padding: PaddingValues,
+    categories: List<Pair<String, String>>,
+    onAddCategory: (String) -> Unit,
+    onRenameCategory: (String, String) -> Boolean,
+    onDeleteCategory: (String) -> Boolean,
+    onBackup: () -> Unit
+) {
+    var manageCategories by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(padding).padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Your space", fontSize = 28.sp, color = ink, fontWeight = FontWeight.Bold)
         Text("A budget that feels like yours.", color = muted)
-        Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).clickable { addCategory = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Category, null, tint = forest); Column(Modifier.weight(1f).padding(start = 13.dp)) { Text("Categories", color = ink, fontWeight = FontWeight.SemiBold); Text(categories.joinToString(" · ") { it.first }, color = muted, fontSize = 12.sp) }; Text("›", color = muted, fontSize = 24.sp)
+        Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).clickable { manageCategories = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Category, null, tint = forest); Column(Modifier.weight(1f).padding(start = 13.dp)) { Text("Manage categories", color = ink, fontWeight = FontWeight.SemiBold); Text("${categories.size} categories", color = muted, fontSize = 12.sp) }; Text("›", color = muted, fontSize = 24.sp)
         }
         SettingsCard(Icons.Default.Savings, "Monthly plan", "Adjust your budget for this month")
         SettingsCard(Icons.Default.ReceiptLong, "Recurring items", "Keep regular bills in view")
@@ -552,7 +566,160 @@ private fun SettingsScreen(padding: PaddingValues, categories: List<Pair<String,
         }
         Spacer(Modifier.weight(1f)); Text("Your money stays yours. Private by design.", color = muted, fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
     }
-    if (addCategory) CategoryEntryDialog(onDismiss = { addCategory = false }) { onAddCategory(it); addCategory = false }
+    if (manageCategories) CategoryManagementDialog(
+        categories = categories,
+        onDismiss = { manageCategories = false },
+        onAddCategory = onAddCategory,
+        onRenameCategory = onRenameCategory,
+        onDeleteCategory = onDeleteCategory
+    )
+}
+
+@Composable
+private fun CategoryManagementDialog(
+    categories: List<Pair<String, String>>,
+    onDismiss: () -> Unit,
+    onAddCategory: (String) -> Unit,
+    onRenameCategory: (String, String) -> Boolean,
+    onDeleteCategory: (String) -> Boolean
+) {
+    var addCategory by remember { mutableStateOf(false) }
+    var categoryToEdit by remember { mutableStateOf<String?>(null) }
+    var categoryToDelete by remember { mutableStateOf<String?>(null) }
+    var actionsForCategory by remember { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Manage categories") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { Text("Use categories to organize your transactions.", color = muted) }
+                    items(categories) { (name, icon) ->
+                    SwipeCategoryRow(
+                        name = name,
+                        icon = icon,
+                        showActions = actionsForCategory == name,
+                        onSwipeStateChange = { open -> actionsForCategory = if (open) name else null },
+                        onEdit = { actionsForCategory = null; categoryToEdit = name },
+                        onDelete = { actionsForCategory = null; categoryToDelete = name }
+                    )
+                    }
+                }
+                OutlinedButton(onClick = { addCategory = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add category")
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+    )
+    if (addCategory) CategoryEntryDialog(
+        onDismiss = { addCategory = false },
+        onSave = { name -> onAddCategory(name); addCategory = false }
+    )
+    categoryToEdit?.let { name ->
+        EditCategoryDialog(
+            name = name,
+            onDismiss = { categoryToEdit = null },
+            onSave = { newName ->
+                if (onRenameCategory(name, newName)) categoryToEdit = null
+                else message = "That category name is already in use, or its budgets would overlap."
+            }
+        )
+    }
+    categoryToDelete?.let { name ->
+        AlertDialog(
+            onDismissRequest = { categoryToDelete = null },
+            title = { Text("Delete $name?") },
+            text = { Text("This removes the category from your list. Categories used by transactions, budgets, or recurring items cannot be deleted.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val deleted = onDeleteCategory(name)
+                    categoryToDelete = null
+                    if (!deleted) message = "This category is still used by a transaction, budget, or recurring item."
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { categoryToDelete = null }) { Text("Cancel") } }
+        )
+    }
+    message?.let { text ->
+        AlertDialog(
+            onDismissRequest = { message = null },
+            text = { Text(text) },
+            confirmButton = { TextButton(onClick = { message = null }) { Text("OK") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun SwipeCategoryRow(
+    name: String,
+    icon: String,
+    showActions: Boolean,
+    onSwipeStateChange: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val actionsWidth = 100.dp
+    val actionsWidthPx = with(density) { actionsWidth.toPx() }
+    val openThresholdPx = with(density) { 50.dp.toPx() }
+    var offsetX by remember(name) { mutableFloatStateOf(0f) }
+    LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
+
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
+        Row(
+            Modifier.align(Alignment.CenterEnd).width(actionsWidth),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp)).clickable(onClick = onEdit).padding(10.dp)) {
+                Icon(Icons.Default.Edit, contentDescription = "Edit $name category", tint = forest)
+            }
+            Spacer(Modifier.width(6.dp))
+            Box(Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp)).clickable(onClick = onDelete).padding(10.dp)) {
+                Icon(Icons.Default.DeleteOutline, contentDescription = "Delete $name category", tint = Color(0xFF8C1D18))
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth()
+                .graphicsLayer { translationX = offsetX }
+                .background(Color.White, RoundedCornerShape(16.dp))
+                .pointerInput(name, actionsWidthPx) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetX = (offsetX + dragAmount).coerceIn(-actionsWidthPx, 0f)
+                        },
+                        onDragEnd = {
+                            val open = offsetX <= -openThresholdPx
+                            offsetX = if (open) -actionsWidthPx else 0f
+                            onSwipeStateChange(open)
+                        }
+                    )
+                }
+                .padding(horizontal = 12.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(icon, color = forest)
+            Text(name, Modifier.weight(1f).padding(start = 12.dp), color = ink, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+@Composable
+private fun EditCategoryDialog(name: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var editedName by remember(name) { mutableStateOf(name) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit category") },
+        text = { OutlinedTextField(editedName, { editedName = it }, label = { Text("Category name") }, singleLine = true) },
+        confirmButton = { Button(onClick = { if (editedName.isNotBlank()) onSave(editedName.trim()) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable
