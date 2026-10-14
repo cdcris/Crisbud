@@ -5,7 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Settings
@@ -23,7 +24,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -197,7 +200,7 @@ private fun ActivityScreen(
             TransactionRow(
                 item = item,
                 showDelete = actionsForTransaction == item.id,
-                onLongClick = { actionsForTransaction = if (actionsForTransaction == item.id) null else item.id },
+                onSwipeStateChange = { isOpen -> actionsForTransaction = if (isOpen) item.id else null },
                 onEditClick = { transactionToEdit = item },
                 onDeleteClick = { transactionToDelete = item }
             )
@@ -234,19 +237,36 @@ private fun ActivityScreen(
 private fun TransactionRow(
     item: Transaction,
     showDelete: Boolean = false,
-    onLongClick: (() -> Unit)? = null,
+    onSwipeStateChange: ((Boolean) -> Unit)? = null,
     onEditClick: (() -> Unit)? = null,
     onDeleteClick: (() -> Unit)? = null
 ) {
-    val rowModifier = Modifier
-        .fillMaxWidth()
-        .background(Color.White, RoundedCornerShape(16.dp))
-        .padding(14.dp)
-    Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val actionsWidth = 148.dp
+    val actionsWidthPx = with(density) { actionsWidth.toPx() }
+    val openThresholdPx = with(density) { 72.dp.toPx() }
+    var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
+    LaunchedEffect(showDelete) { offsetX = 0f }
+
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
         Row(
-            Modifier.weight(1f).then(if (onLongClick != null) Modifier.pointerInput(item.id) {
-                detectTapGestures(onLongPress = { onLongClick() })
-            } else Modifier),
+            Modifier.fillMaxWidth()
+                .graphicsLayer { translationX = offsetX }
+                .background(Color.White, RoundedCornerShape(16.dp))
+                .then(if (onSwipeStateChange != null) Modifier.pointerInput(item.id, actionsWidthPx) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetX = (offsetX + dragAmount).coerceIn(-actionsWidthPx, 0f)
+                        },
+                        onDragEnd = {
+                            val open = offsetX <= -openThresholdPx
+                            offsetX = if (open) -actionsWidthPx else 0f
+                            onSwipeStateChange(open)
+                        }
+                    )
+                } else Modifier)
+                .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(Modifier.size(42.dp).background(if (item.income) mint else Color(0xFFF5F0E9), RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
@@ -254,12 +274,22 @@ private fun TransactionRow(
             }
             Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(item.title, fontWeight = FontWeight.SemiBold, color = ink); Text("${item.category}  ·  ${item.day}", color = muted, fontSize = 12.sp) }
             Text((if (item.income) "+" else "−") + money(item.amount), color = if (item.income) forest else ink, fontWeight = FontWeight.Bold)
-        }
-        if (showDelete) {
-            TextButton(onClick = { onEditClick?.invoke() }) { Text("Edit", color = forest) }
-            if (onDeleteClick != null) {
-                IconButton(onClick = onDeleteClick) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${item.title}", tint = muted)
+            if (showDelete) {
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp))
+                        .clickable { onSwipeStateChange?.invoke(false); onEditClick?.invoke() }
+                        .padding(10.dp)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = "Edit ${item.title}", tint = forest)
+                }
+                Spacer(Modifier.width(6.dp))
+                Box(
+                    Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp))
+                        .clickable { onSwipeStateChange?.invoke(false); onDeleteClick?.invoke() }
+                        .padding(10.dp)
+                ) {
+                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${item.title}", tint = Color(0xFF8C1D18))
                 }
             }
         }
