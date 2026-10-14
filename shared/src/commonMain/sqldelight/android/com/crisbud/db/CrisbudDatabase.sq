@@ -42,7 +42,7 @@ INSERT INTO Entries(title, category, amount, income, date)
 VALUES (?, ?, ?, ?, ?);
 
 updateTransaction:
-UPDATE Entries SET title = ?, category = ?, amount = ?, income = ? WHERE id = ?;
+UPDATE Entries SET title = ?, category = ?, amount = ?, income = ?, date = ? WHERE id = ?;
 
 deleteTransaction:
 DELETE FROM Entries WHERE id = ?;

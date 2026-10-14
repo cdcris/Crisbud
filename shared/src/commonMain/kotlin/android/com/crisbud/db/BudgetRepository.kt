@@ -54,8 +54,8 @@ class BudgetRepository {
 
     fun deleteTransaction(id: Long) = q.deleteTransaction(id)
 
-    fun updateTransaction(id: Long, title: String, category: String, amount: Double, income: Boolean) =
-        q.updateTransaction(title, category, amount, income, id)
+    fun updateTransaction(id: Long, title: String, category: String, amount: Double, income: Boolean, date: String) =
+        q.updateTransaction(title, category, amount, income, date, id)
 
     fun addCategory(name: String, icon: String = "•") = q.insertCategory(name, icon, false)
     fun addBudget(category: String, month: String, limit: Double) = q.insertBudget(category, month, limit)

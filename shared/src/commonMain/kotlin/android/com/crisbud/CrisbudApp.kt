@@ -33,14 +33,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.ExperimentalMaterial3Api
 import android.com.crisbud.db.BudgetRepository
 import android.com.crisbud.db.currentIsoDate
+import android.com.crisbud.db.epochMillisFromIsoDate
+import android.com.crisbud.db.isoDateFromEpochMillis
 
-private val forest = Color(0xFF285B45)
-private val mint = Color(0xFFEAF3EC)
-private val ink = Color(0xFF1E2A22)
-private val muted = Color(0xFF748078)
-private val orange = Color(0xFFE5A35A)
+private val forest = Color(0xFF315D4B)
+private val mint = Color(0xFFDDEEE3)
+private val ink = Color(0xFF17251E)
+private val muted = Color(0xFF68776D)
+private val orange = Color(0xFFB76E26)
 
 private enum class Screen(val title: String, val icon: ImageVector) {
     Overview("Overview", Icons.Default.Home),
@@ -49,7 +52,7 @@ private enum class Screen(val title: String, val icon: ImageVector) {
     Settings("Settings", Icons.Default.Settings)
 }
 
-private data class Transaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val day: String)
+private data class Transaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val date: String, val day: String)
 private data class Budget(val category: String, val spent: Double, val limit: Double, val icon: String)
 private data class Recurring(val title: String, val category: String, val amount: Double, val dueDay: Long)
 
@@ -68,14 +71,14 @@ fun CrisbudApp() {
     val categories = remember(revision) { repository.categories() }
     val budgets = remember(revision) { repository.budgets(month).map { stored -> Budget(stored.category, stored.spent, stored.limit, categories.firstOrNull { it.first == stored.category }?.second ?: "•") } }
     val recurring = remember(revision) { repository.recurring().map { Recurring(it.title, it.category, it.amount, it.dueDay) } }
-    val transactions = storedTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, if (it.date == today) "Today" else it.date) }
-    val monthTransactions = currentMonthTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, if (it.date == today) "Today" else it.date) }
+    val transactions = storedTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, if (it.date == today) "Today" else it.date) }
+    val monthTransactions = currentMonthTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, if (it.date == today) "Today" else it.date) }
     val spent = monthTransactions.filter { !it.income }.sumOf { it.amount }
     val income = monthTransactions.filter { it.income }.sumOf { it.amount }
 
     CrisbudTheme {
         Scaffold(
-            containerColor = Color(0xFFF6F8F5),
+            containerColor = Color(0xFFF6F8F4),
             bottomBar = {
                 NavigationBar(containerColor = Color.White) {
                     Screen.values().forEach { item ->
@@ -96,8 +99,8 @@ fun CrisbudApp() {
                 Screen.Activity -> ActivityScreen(
                     padding, transactions, categories.map { it.first },
                     onDelete = { id -> repository.deleteTransaction(id); revision++ },
-                    onEdit = { id, title, category, amount, isIncome ->
-                        repository.updateTransaction(id, title, category, amount, isIncome)
+                    onEdit = { id, title, category, amount, isIncome, date ->
+                        repository.updateTransaction(id, title, category, amount, isIncome, date)
                         revision++
                     }
                 )
@@ -108,7 +111,7 @@ fun CrisbudApp() {
             }
         }
         if (showEntry) AddTransactionDialog(categoryNames = categories.map { it.first }, onDismiss = { showEntry = false }, onSave = { item ->
-            repository.addTransaction(item.title, item.category, item.amount, item.income, today)
+            repository.addTransaction(item.title, item.category, item.amount, item.income, item.date)
             revision++
             showEntry = false
         })
@@ -188,7 +191,7 @@ private fun ActivityScreen(
     transactions: List<Transaction>,
     categories: List<String>,
     onDelete: (Long) -> Unit,
-    onEdit: (Long, String, String, Double, Boolean) -> Unit
+    onEdit: (Long, String, String, Double, Boolean, String) -> Unit
 ) {
     var transactionToDelete by remember { mutableStateOf<Transaction?>(null) }
     var transactionToEdit by remember { mutableStateOf<Transaction?>(null) }
@@ -224,8 +227,8 @@ private fun ActivityScreen(
             item = item,
             categoryNames = categories,
             onDismiss = { transactionToEdit = null },
-            onSave = { title, category, amount, income ->
-                onEdit(item.id, title, category, amount, income)
+            onSave = { title, category, amount, income, date ->
+                onEdit(item.id, title, category, amount, income, date)
                 transactionToEdit = null
                 actionsForTransaction = null
             }
@@ -354,12 +357,13 @@ private fun EditTransactionDialog(
     item: Transaction,
     categoryNames: List<String>,
     onDismiss: () -> Unit,
-    onSave: (String, String, Double, Boolean) -> Unit
+    onSave: (String, String, Double, Boolean, String) -> Unit
 ) {
     var title by remember(item.id) { mutableStateOf(item.title) }
     var amount by remember(item.id) { mutableStateOf(item.amount.toString()) }
     var category by remember(item.id) { mutableStateOf(item.category) }
     var income by remember(item.id) { mutableStateOf(item.income) }
+    var date by remember(item.id) { mutableStateOf(item.date) }
     var expanded by remember { mutableStateOf(false) }
     val categories = (categoryNames + category).distinct()
 
@@ -381,6 +385,7 @@ private fun EditTransactionDialog(
                 }
                 OutlinedTextField(title, { title = it }, label = { Text("What was it for?") }, singleLine = true)
                 OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("$") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                OutlinedTextField(date, { date = it }, label = { Text("Date (YYYY-MM-DD)") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
                 Box {
                     OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text("$category     ▾", color = ink) }
                     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -393,7 +398,7 @@ private fun EditTransactionDialog(
             Button(
                 onClick = {
                     val parsed = amount.toDoubleOrNull()
-                    if (title.isNotBlank() && parsed != null && parsed > 0) onSave(title.trim(), category, parsed, income)
+                    if (title.isNotBlank() && parsed != null && parsed > 0 && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) onSave(title.trim(), category, parsed, income, date)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = forest)
             ) { Text("Save") }
@@ -403,12 +408,15 @@ private fun EditTransactionDialog(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun AddTransactionDialog(categoryNames: List<String>, onDismiss: () -> Unit, onSave: (Transaction) -> Unit) {
     var title by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
+    var date by remember { mutableStateOf(currentIsoDate()) }
     var category by remember { mutableStateOf("Food & Drink") }
     var income by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
     val categories = categoryNames.ifEmpty { listOf("Food & Drink", "Transport", "Home", "Other") }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Add transaction", fontWeight = FontWeight.Bold) },
         text = {
@@ -420,14 +428,33 @@ private fun AddTransactionDialog(categoryNames: List<String>, onDismiss: () -> U
                 }
                 OutlinedTextField(title, { title = it }, label = { Text("What was it for?") }, singleLine = true)
                 OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("$") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Date   ·   $date", color = ink)
+                }
                 Box {
                     OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text("$category     ▾", color = ink) }
                     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) { categories.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { category = it; expanded = false }) } }
                 }
             }
         },
-        confirmButton = { Button(onClick = { val parsed = amount.toDoubleOrNull(); if (title.isNotBlank() && parsed != null && parsed > 0) onSave(Transaction(0, title.trim(), category, parsed, income, "Today")) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } },
+        confirmButton = { Button(onClick = { val parsed = amount.toDoubleOrNull(); if (title.isNotBlank() && parsed != null && parsed > 0 && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) onSave(Transaction(0, title.trim(), category, parsed, income, date, date)) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+    if (showDatePicker) {
+        val initialDateMillis = remember(date) { epochMillisFromIsoDate(date) }
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialDateMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { date = isoDateFromEpochMillis(it) }
+                    showDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
 }
 
 @Composable
@@ -480,5 +507,47 @@ private fun money(value: Double): String = "$" + ((value * 100).toLong() / 100.0
 
 @Composable
 private fun CrisbudTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = lightColorScheme(primary = forest, secondary = Color(0xFF6A9E79), tertiary = orange, background = Color(0xFFF6F8F5), surface = Color.White, surfaceVariant = mint, onSurfaceVariant = muted), content = content)
+    val colors = lightColorScheme(
+        primary = forest,
+        onPrimary = Color.White,
+        primaryContainer = mint,
+        onPrimaryContainer = Color(0xFF153B2B),
+        secondary = Color(0xFF52675A),
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFE0E9E1),
+        onSecondaryContainer = Color(0xFF24372B),
+        tertiary = orange,
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFFFDCC0),
+        onTertiaryContainer = Color(0xFF321900),
+        background = Color(0xFFF6F8F4),
+        onBackground = ink,
+        surface = Color(0xFFFCFDF9),
+        onSurface = ink,
+        surfaceVariant = Color(0xFFE8EDE7),
+        onSurfaceVariant = muted,
+        outline = Color(0xFF87958B),
+        outlineVariant = Color(0xFFD7DED7),
+        error = Color(0xFFBA1A1A),
+        onError = Color.White,
+        errorContainer = Color(0xFFFFDAD6),
+        onErrorContainer = Color(0xFF410002)
+    )
+    val typography = Typography(
+        headlineLarge = androidx.compose.ui.text.TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Bold, color = ink),
+        headlineMedium = androidx.compose.ui.text.TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold, color = ink),
+        titleLarge = androidx.compose.ui.text.TextStyle(fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = ink),
+        titleMedium = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = ink),
+        bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, color = ink),
+        bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = ink),
+        labelLarge = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    )
+    val shapes = Shapes(
+        extraSmall = RoundedCornerShape(8.dp),
+        small = RoundedCornerShape(12.dp),
+        medium = RoundedCornerShape(18.dp),
+        large = RoundedCornerShape(24.dp),
+        extraLarge = RoundedCornerShape(32.dp)
+    )
+    MaterialTheme(colorScheme = colors, typography = typography, shapes = shapes, content = content)
 }
