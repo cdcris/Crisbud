@@ -1,15 +1,19 @@
 package android.com.crisbud.db
 
 
-data class StoredTransaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val date: String)
+data class StoredTransaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val date: String, val wallet: String)
 data class StoredBudget(val id: Long, val category: String, val spent: Double, val limit: Double)
 data class StoredRecurring(val id: Long, val title: String, val category: String, val amount: Double, val dueDay: Long, val cadence: String)
+data class StoredWallet(val name: String, val balance: Double)
 
 class BudgetRepository {
     private val database = CrisbudDatabase(createDatabaseDriver())
     private val q = database.crisbudDatabaseQueries
 
     fun seedIfNeeded(month: String) {
+        if (q.selectWallets().executeAsList().isEmpty()) {
+            listOf("GCash", "MariBank", "Cash").forEach(q::insertWallet)
+        }
         if (q.selectCategories().executeAsList().isEmpty()) {
             listOf("Food & Drink" to "🍜", "Transport" to "🚆", "Home" to "⌂", "Shopping" to "🛍", "Health" to "＋", "Income" to "↗", "Other" to "•")
                 .forEach { q.insertCategory(it.first, it.second, it.first == "Income") }
@@ -24,21 +28,25 @@ class BudgetRepository {
             q.insertRecurringItem("Streaming", "Subscriptions", 14.99, 18, "Monthly")
         }
         if (q.selectTransactions().executeAsList().isEmpty()) {
-            q.insertTransaction("Grocery run", "Food & Drink", 42.80, false, "$month-12")
-            q.insertTransaction("Monthly salary", "Income", 3200.0, true, "$month-01")
-            q.insertTransaction("Train pass", "Transport", 32.0, false, "$month-13")
+            q.insertTransaction("Grocery run", "Food & Drink", 42.80, false, "$month-12", "Cash")
+            q.insertTransaction("Monthly salary", "Income", 3200.0, true, "$month-01", "Cash")
+            q.insertTransaction("Train pass", "Transport", 32.0, false, "$month-13", "Cash")
         }
     }
 
     fun transactions(): List<StoredTransaction> = q.selectTransactions().executeAsList().map {
-        StoredTransaction(it.id, it.title, it.category, it.amount, it.income, it.date)
+        StoredTransaction(it.id, it.title, it.category, it.amount, it.income, it.date, it.wallet)
     }
 
     fun transactions(month: String): List<StoredTransaction> = q.selectTransactionsForMonth(month).executeAsList().map {
-        StoredTransaction(it.id, it.title, it.category, it.amount, it.income, it.date)
+        StoredTransaction(it.id, it.title, it.category, it.amount, it.income, it.date, it.wallet)
     }
 
     fun categories(): List<Pair<String, String>> = q.selectCategories().executeAsList().map { it.name to it.icon }
+
+    fun wallets(): List<String> = q.selectWallets().executeAsList().map { it.name }
+
+    fun walletBalances(): List<StoredWallet> = q.selectWallets().executeAsList().map { StoredWallet(it.name, it.balance) }
 
     fun budgets(month: String): List<StoredBudget> = q.selectBudgetsForMonth(month).executeAsList().map {
         StoredBudget(it.id, it.category, it.spent, it.limit_amount)
@@ -48,14 +56,29 @@ class BudgetRepository {
         StoredRecurring(it.id, it.title, it.category, it.amount, it.due_day, it.cadence)
     }
 
-    fun addTransaction(title: String, category: String, amount: Double, income: Boolean, date: String) {
-        q.insertTransaction(title, category, amount, income, date)
+    fun addTransaction(title: String, category: String, amount: Double, income: Boolean, date: String, wallet: String) {
+        q.insertTransaction(title, category, amount, income, date, wallet)
     }
 
     fun deleteTransaction(id: Long) = q.deleteTransaction(id)
 
-    fun updateTransaction(id: Long, title: String, category: String, amount: Double, income: Boolean, date: String) =
-        q.updateTransaction(title, category, amount, income, date, id)
+    fun updateTransaction(id: Long, title: String, category: String, amount: Double, income: Boolean, date: String, wallet: String) =
+        q.updateTransaction(title, category, amount, income, date, wallet, id)
+
+    fun addWallet(name: String) = q.insertWallet(name)
+    fun updateWalletBalance(name: String, balance: Double) = q.updateWalletBalance(balance, name)
+    fun renameWallet(oldName: String, newName: String): Boolean {
+        if (q.walletNameConflictCount(newName, oldName).executeAsOne() > 0) return false
+        q.renameEntryWallet(newName, oldName)
+        q.renameWallet(newName, oldName)
+        return true
+    }
+
+    fun deleteWallet(name: String): Boolean {
+        if (wallets().size <= 1 || q.walletUsageCount(name).executeAsOne() > 0) return false
+        q.deleteWallet(name)
+        return true
+    }
 
     fun addCategory(name: String, icon: String = "•") = q.insertCategory(name, icon, false)
     fun renameCategory(oldName: String, newName: String): Boolean {
@@ -85,10 +108,11 @@ class BudgetRepository {
     fun deleteRecurring(id: Long) = q.deleteRecurringItem(id)
 
     fun exportJson(): String {
-        val tx = transactions().joinToString(",") { "{\"title\":\"${escape(it.title)}\",\"category\":\"${escape(it.category)}\",\"amount\":${it.amount},\"income\":${it.income},\"date\":\"${it.date}\"}" }
+        val tx = transactions().joinToString(",") { "{\"title\":\"${escape(it.title)}\",\"category\":\"${escape(it.category)}\",\"amount\":${it.amount},\"income\":${it.income},\"date\":\"${it.date}\",\"wallet\":\"${escape(it.wallet)}\"}" }
         val cats = categories().joinToString(",") { "{\"name\":\"${escape(it.first)}\",\"icon\":\"${escape(it.second)}\"}" }
         val recurringItems = recurring().joinToString(",") { "{\"title\":\"${escape(it.title)}\",\"category\":\"${escape(it.category)}\",\"amount\":${it.amount},\"dueDay\":${it.dueDay},\"cadence\":\"${it.cadence}\"}" }
-        return "{\"transactions\":[$tx],\"categories\":[$cats],\"budgets\":[${q.exportBudgets().executeAsList().joinToString(",") { "{\"category\":\"${escape(it.category)}\",\"month\":\"${it.month}\",\"limit\":${it.limit_amount}}" }}],\"recurring\":[$recurringItems]}"
+        val walletItems = walletBalances().joinToString(",") { "{\"name\":\"${escape(it.name)}\",\"balance\":${it.balance}}" }
+        return "{\"transactions\":[$tx],\"wallets\":[$walletItems],\"categories\":[$cats],\"budgets\":[${q.exportBudgets().executeAsList().joinToString(",") { "{\"category\":\"${escape(it.category)}\",\"month\":\"${it.month}\",\"limit\":${it.limit_amount}}" }}],\"recurring\":[$recurringItems]}"
     }
 
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")

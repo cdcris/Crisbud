@@ -4,7 +4,13 @@ CREATE TABLE Entries (
   category TEXT NOT NULL,
   amount REAL NOT NULL,
   income INTEGER AS kotlin.Boolean NOT NULL,
-  date TEXT NOT NULL
+  date TEXT NOT NULL,
+  wallet TEXT NOT NULL DEFAULT 'Cash'
+);
+
+CREATE TABLE Wallet (
+  name TEXT NOT NULL PRIMARY KEY,
+  balance REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE Category (
@@ -38,14 +44,38 @@ selectTransactionsForMonth:
 SELECT * FROM Entries WHERE substr(date, 1, 7) = ? ORDER BY date DESC, id DESC;
 
 insertTransaction:
-INSERT INTO Entries(title, category, amount, income, date)
-VALUES (?, ?, ?, ?, ?);
+INSERT INTO Entries(title, category, amount, income, date, wallet)
+VALUES (?, ?, ?, ?, ?, ?);
 
 updateTransaction:
-UPDATE Entries SET title = ?, category = ?, amount = ?, income = ?, date = ? WHERE id = ?;
+UPDATE Entries SET title = ?, category = ?, amount = ?, income = ?, date = ?, wallet = ? WHERE id = ?;
 
 deleteTransaction:
 DELETE FROM Entries WHERE id = ?;
+
+selectWallets:
+SELECT * FROM Wallet ORDER BY name;
+
+walletNameConflictCount:
+SELECT COUNT(*) AS conflict_count FROM Wallet WHERE lower(name) = lower(?) AND name != ?;
+
+updateWalletBalance:
+UPDATE Wallet SET balance = ? WHERE name = ?;
+
+insertWallet:
+INSERT OR IGNORE INTO Wallet(name) VALUES (?);
+
+renameWallet:
+UPDATE Wallet SET name = ? WHERE name = ?;
+
+renameEntryWallet:
+UPDATE Entries SET wallet = ? WHERE wallet = ?;
+
+walletUsageCount:
+SELECT COUNT(*) FROM Entries WHERE wallet = ?;
+
+deleteWallet:
+DELETE FROM Wallet WHERE name = ?;
 
 selectCategories:
 SELECT * FROM Category ORDER BY name;

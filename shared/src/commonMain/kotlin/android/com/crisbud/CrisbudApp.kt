@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import android.com.crisbud.db.BudgetRepository
+import android.com.crisbud.db.StoredWallet
 import android.com.crisbud.db.currentIsoDate
 import android.com.crisbud.db.epochMillisFromIsoDate
 import android.com.crisbud.db.isoDateFromEpochMillis
@@ -52,10 +53,9 @@ private enum class Screen(val title: String, val icon: ImageVector) {
     Settings("Settings", Icons.Default.Settings)
 }
 
-private data class Transaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val date: String, val day: String)
+private data class Transaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val date: String, val wallet: String, val day: String)
 private data class Budget(val id: Long, val category: String, val spent: Double, val limit: Double, val icon: String)
 private data class Recurring(val id: Long, val title: String, val category: String, val amount: Double, val dueDay: Long)
-
 @Composable
 fun CrisbudApp() {
     var screen by remember { mutableStateOf(Screen.Overview) }
@@ -69,10 +69,12 @@ fun CrisbudApp() {
     val storedTransactions = remember(revision) { repository.transactions() }
     val currentMonthTransactions = remember(revision) { repository.transactions(month) }
     val categories = remember(revision) { repository.categories() }
+    val walletBalances = remember(revision) { repository.walletBalances() }
+    val wallets = walletBalances.map { it.name }
     val budgets = remember(revision) { repository.budgets(month).map { stored -> Budget(stored.id, stored.category, stored.spent, stored.limit, categories.firstOrNull { it.first == stored.category }?.second ?: "•") } }
     val recurring = remember(revision) { repository.recurring().map { Recurring(it.id, it.title, it.category, it.amount, it.dueDay) } }
-    val transactions = storedTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, if (it.date == today) "Today" else it.date) }
-    val monthTransactions = currentMonthTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, if (it.date == today) "Today" else it.date) }
+    val transactions = storedTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, it.wallet, if (it.date == today) "Today" else it.date) }
+    val monthTransactions = currentMonthTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, it.wallet, if (it.date == today) "Today" else it.date) }
     val spent = monthTransactions.filter { !it.income }.sumOf { it.amount }
     val income = monthTransactions.filter { it.income }.sumOf { it.amount }
 
@@ -99,8 +101,8 @@ fun CrisbudApp() {
                 Screen.Activity -> ActivityScreen(
                     padding, transactions, categories.map { it.first }, month,
                     onDelete = { id -> repository.deleteTransaction(id); revision++ },
-                    onEdit = { id, title, category, amount, isIncome, date ->
-                        repository.updateTransaction(id, title, category, amount, isIncome, date)
+                    onEdit = { id, title, category, amount, isIncome, date, wallet ->
+                        repository.updateTransaction(id, title, category, amount, isIncome, date, wallet)
                         revision++
                     }
                 )
@@ -114,15 +116,20 @@ fun CrisbudApp() {
                 Screen.Settings -> SettingsScreen(
                     padding,
                     categories,
+                    walletBalances,
                     onAddCategory = { name -> repository.addCategory(name); revision++ },
                     onRenameCategory = { oldName, newName -> repository.renameCategory(oldName, newName).also { if (it) revision++ } },
                     onDeleteCategory = { name -> repository.deleteCategory(name).also { if (it) revision++ } },
+                    onAddWallet = { name -> repository.addWallet(name); revision++ },
+                    onRenameWallet = { oldName, newName -> repository.renameWallet(oldName, newName).also { if (it) revision++ } },
+                    onDeleteWallet = { name -> repository.deleteWallet(name).also { if (it) revision++ } },
+                    onSetWalletBalance = { name, balance -> repository.updateWalletBalance(name, balance); revision++ },
                     onBackup = { showBackup = true }
                 )
             }
         }
-        if (showEntry) AddTransactionDialog(categoryNames = categories.map { it.first }, onDismiss = { showEntry = false }, onSave = { item ->
-            repository.addTransaction(item.title, item.category, item.amount, item.income, item.date)
+        if (showEntry) AddTransactionDialog(categoryNames = categories.map { it.first }, walletNames = wallets, onDismiss = { showEntry = false }, onSave = { item ->
+            repository.addTransaction(item.title, item.category, item.amount, item.income, item.date, item.wallet)
             revision++
             showEntry = false
         })
@@ -209,6 +216,7 @@ private fun BudgetActionRow(
     val actionsWidthPx = with(density) { actionsWidth.toPx() }
     val openThresholdPx = with(density) { 50.dp.toPx() }
     var offsetX by remember(budget.id) { mutableFloatStateOf(0f) }
+    val revealedWidth = with(density) { (-offsetX).toDp() }
     LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
 
     Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))) {
@@ -227,7 +235,7 @@ private fun BudgetActionRow(
         }
         Box(
             Modifier.fillMaxWidth()
-                .graphicsLayer { translationX = offsetX }
+                .padding(end = revealedWidth)
                 .pointerInput(budget.id, actionsWidthPx) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
@@ -279,7 +287,7 @@ private fun ActivityScreen(
     categories: List<String>,
     month: String,
     onDelete: (Long) -> Unit,
-    onEdit: (Long, String, String, Double, Boolean, String) -> Unit
+    onEdit: (Long, String, String, Double, Boolean, String, String) -> Unit
 ) {
     var transactionToDelete by remember { mutableStateOf<Transaction?>(null) }
     var transactionToEdit by remember { mutableStateOf<Transaction?>(null) }
@@ -336,9 +344,10 @@ private fun ActivityScreen(
         EditTransactionDialog(
             item = item,
             categoryNames = categories,
+            walletNames = transactions.map { it.wallet }.distinct(),
             onDismiss = { transactionToEdit = null },
-            onSave = { title, category, amount, income, date ->
-                onEdit(item.id, title, category, amount, income, date)
+            onSave = { title, category, amount, income, date, wallet ->
+                onEdit(item.id, title, category, amount, income, date, wallet)
                 transactionToEdit = null
                 actionsForTransaction = null
             }
@@ -355,16 +364,28 @@ private fun TransactionRow(
     onDeleteClick: (() -> Unit)? = null
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val actionsWidth = 148.dp
+    val actionsWidth = 100.dp
     val actionsWidthPx = with(density) { actionsWidth.toPx() }
     val openThresholdPx = with(density) { 72.dp.toPx() }
     var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
-    LaunchedEffect(showDelete) { offsetX = 0f }
+    val revealedWidth = with(density) { (-offsetX).toDp() }
+    LaunchedEffect(showDelete) { offsetX = if (showDelete) -actionsWidthPx else 0f }
 
     Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
+        if (onSwipeStateChange != null) {
+            Row(Modifier.align(Alignment.CenterEnd).width(actionsWidth), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp)).clickable { onSwipeStateChange(false); onEditClick?.invoke() }.padding(10.dp)) {
+                    Icon(Icons.Default.Edit, contentDescription = "Edit ${item.title}", tint = forest)
+                }
+                Spacer(Modifier.width(6.dp))
+                Box(Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp)).clickable { onSwipeStateChange(false); onDeleteClick?.invoke() }.padding(10.dp)) {
+                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${item.title}", tint = Color(0xFF8C1D18))
+                }
+            }
+        }
         Row(
             Modifier.fillMaxWidth()
-                .graphicsLayer { translationX = offsetX }
+                .padding(end = revealedWidth)
                 .background(Color.White, RoundedCornerShape(16.dp))
                 .then(if (onSwipeStateChange != null) Modifier.pointerInput(item.id, actionsWidthPx) {
                     detectHorizontalDragGestures(
@@ -385,26 +406,8 @@ private fun TransactionRow(
             Box(Modifier.size(42.dp).background(if (item.income) mint else Color(0xFFF5F0E9), RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
                 Icon(if (item.income) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward, contentDescription = null, tint = if (item.income) forest else orange)
             }
-            Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(item.title, fontWeight = FontWeight.SemiBold, color = ink); Text("${item.category}  ·  ${item.day}", color = muted, fontSize = 12.sp) }
+            Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(item.title, fontWeight = FontWeight.SemiBold, color = ink); Text("${item.category}  ·  ${item.wallet}  ·  ${item.day}", color = muted, fontSize = 12.sp) }
             Text((if (item.income) "+" else "−") + money(item.amount), color = if (item.income) forest else ink, fontWeight = FontWeight.Bold)
-            if (showDelete) {
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp))
-                        .clickable { onSwipeStateChange?.invoke(false); onEditClick?.invoke() }
-                        .padding(10.dp)
-                ) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit ${item.title}", tint = forest)
-                }
-                Spacer(Modifier.width(6.dp))
-                Box(
-                    Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp))
-                        .clickable { onSwipeStateChange?.invoke(false); onDeleteClick?.invoke() }
-                        .padding(10.dp)
-                ) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${item.title}", tint = Color(0xFF8C1D18))
-                }
-            }
         }
     }
 }
@@ -472,6 +475,7 @@ private fun RecurringActionRow(
     val actionsWidthPx = with(density) { actionsWidth.toPx() }
     val openThresholdPx = with(density) { 50.dp.toPx() }
     var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
+    val revealedWidth = with(density) { (-offsetX).toDp() }
     LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
 
     Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
@@ -490,7 +494,7 @@ private fun RecurringActionRow(
         }
         Box(
             Modifier.fillMaxWidth()
-                .graphicsLayer { translationX = offsetX }
+                .padding(end = revealedWidth)
                 .pointerInput(item.id, actionsWidthPx) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
@@ -547,15 +551,24 @@ private fun EditRecurringDialog(
 private fun SettingsScreen(
     padding: PaddingValues,
     categories: List<Pair<String, String>>,
+    wallets: List<StoredWallet>,
     onAddCategory: (String) -> Unit,
     onRenameCategory: (String, String) -> Boolean,
     onDeleteCategory: (String) -> Boolean,
+    onAddWallet: (String) -> Unit,
+    onRenameWallet: (String, String) -> Boolean,
+    onDeleteWallet: (String) -> Boolean,
+    onSetWalletBalance: (String, Double) -> Unit,
     onBackup: () -> Unit
 ) {
     var manageCategories by remember { mutableStateOf(false) }
+    var manageWallets by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(padding).padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Your space", fontSize = 28.sp, color = ink, fontWeight = FontWeight.Bold)
         Text("A budget that feels like yours.", color = muted)
+        Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).clickable { manageWallets = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Savings, null, tint = forest); Column(Modifier.weight(1f).padding(start = 13.dp)) { Text("Manage wallets", color = ink, fontWeight = FontWeight.SemiBold); Text("${wallets.size} wallets", color = muted, fontSize = 12.sp) }; Text("›", color = muted, fontSize = 24.sp)
+        }
         Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).clickable { manageCategories = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.Category, null, tint = forest); Column(Modifier.weight(1f).padding(start = 13.dp)) { Text("Manage categories", color = ink, fontWeight = FontWeight.SemiBold); Text("${categories.size} categories", color = muted, fontSize = 12.sp) }; Text("›", color = muted, fontSize = 24.sp)
         }
@@ -572,6 +585,14 @@ private fun SettingsScreen(
         onAddCategory = onAddCategory,
         onRenameCategory = onRenameCategory,
         onDeleteCategory = onDeleteCategory
+    )
+    if (manageWallets) WalletManagementDialog(
+        wallets = wallets,
+        onDismiss = { manageWallets = false },
+        onAddWallet = onAddWallet,
+        onRenameWallet = onRenameWallet,
+        onDeleteWallet = onDeleteWallet,
+        onSetWalletBalance = onSetWalletBalance
     )
 }
 
@@ -655,6 +676,162 @@ private fun CategoryManagementDialog(
 }
 
 @Composable
+private fun WalletManagementDialog(
+    wallets: List<StoredWallet>,
+    onDismiss: () -> Unit,
+    onAddWallet: (String) -> Unit,
+    onRenameWallet: (String, String) -> Boolean,
+    onDeleteWallet: (String) -> Boolean,
+    onSetWalletBalance: (String, Double) -> Unit
+) {
+    var walletToEdit by remember { mutableStateOf<String?>(null) }
+    var walletToDelete by remember { mutableStateOf<String?>(null) }
+    var actionsForWallet by remember { mutableStateOf<String?>(null) }
+    var addingWallet by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Manage wallets") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(Modifier.heightIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    item { Text("Choose a wallet for each activity entry.", color = muted) }
+                    items(wallets, key = { it.name }) { wallet ->
+                        SwipeWalletRow(
+                            wallet = wallet,
+                            showActions = actionsForWallet == wallet.name,
+                            onSwipeStateChange = { open -> actionsForWallet = if (open) wallet.name else null },
+                            onEdit = { actionsForWallet = null; walletToEdit = wallet.name },
+                            onDelete = { actionsForWallet = null; walletToDelete = wallet.name }
+                        )
+                    }
+                }
+                message?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                OutlinedButton(onClick = { addingWallet = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Add, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Add wallet")
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+    )
+    if (addingWallet) WalletNameDialog("Add wallet", initialBalance = 0.0, onDismiss = { addingWallet = false }) { name, balance ->
+        if (wallets.any { it.name.equals(name, ignoreCase = true) }) message = "That wallet name is already in use."
+        else { onAddWallet(name); onSetWalletBalance(name, balance); addingWallet = false; message = null }
+    }
+    walletToEdit?.let { oldName ->
+        val oldWallet = wallets.firstOrNull { it.name == oldName }
+        WalletNameDialog("Edit wallet", oldName, oldWallet?.balance ?: 0.0, onDismiss = { walletToEdit = null }) { newName, balance ->
+        if (onRenameWallet(oldName, newName)) {
+            onSetWalletBalance(newName, balance)
+            walletToEdit = null
+            message = null
+        }
+        else message = "That wallet name is already in use."
+    } }
+    walletToDelete?.let { name ->
+        AlertDialog(
+            onDismissRequest = { walletToDelete = null },
+            title = { Text("Delete $name?") },
+            text = { Text("Wallets used by activities cannot be deleted.") },
+            confirmButton = { TextButton(onClick = {
+                val deleted = onDeleteWallet(name)
+                walletToDelete = null
+                message = if (deleted) null else "This wallet is still used by an activity."
+            }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { walletToDelete = null }) { Text("Cancel") } }
+        )
+    }
+}
+
+@Composable
+private fun WalletNameDialog(
+    title: String,
+    initialName: String = "",
+    initialBalance: Double = 0.0,
+    onDismiss: () -> Unit,
+    onSave: (String, Double) -> Unit
+) {
+    var name by remember(initialName) { mutableStateOf(initialName) }
+    var balance by remember(initialBalance) { mutableStateOf(initialBalance.toString()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("Wallet name") }, singleLine = true)
+                OutlinedTextField(balance, { balance = it }, label = { Text("Current balance") }, prefix = { Text("₱") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+            }
+        },
+        confirmButton = { Button(onClick = {
+            val value = balance.toDoubleOrNull()
+            if (name.isNotBlank() && value != null && value >= 0) onSave(name.trim(), value)
+        }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun SwipeWalletRow(
+    wallet: StoredWallet,
+    showActions: Boolean,
+    onSwipeStateChange: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val actionsWidth = 100.dp
+    val actionsWidthPx = with(density) { actionsWidth.toPx() }
+    val openThresholdPx = with(density) { 50.dp.toPx() }
+    var offsetX by remember(wallet.name) { mutableFloatStateOf(0f) }
+    val revealedWidth = with(density) { (-offsetX).toDp() }
+    LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
+
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
+        Row(
+            Modifier.align(Alignment.CenterEnd).width(actionsWidth),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp)).clickable(onClick = onEdit).padding(10.dp)) {
+                Icon(Icons.Default.Edit, contentDescription = "Edit ${wallet.name} wallet", tint = forest)
+            }
+            Spacer(Modifier.width(6.dp))
+            Box(Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp)).clickable(onClick = onDelete).padding(10.dp)) {
+                Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${wallet.name} wallet", tint = Color(0xFF8C1D18))
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth()
+                .padding(end = revealedWidth)
+                .background(Color.White, RoundedCornerShape(16.dp))
+                .pointerInput(wallet.name, actionsWidthPx) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetX = (offsetX + dragAmount).coerceIn(-actionsWidthPx, 0f)
+                        },
+                        onDragEnd = {
+                            val open = offsetX <= -openThresholdPx
+                            offsetX = if (open) -actionsWidthPx else 0f
+                            onSwipeStateChange(open)
+                        }
+                    )
+                }
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.size(38.dp).background(mint, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                Text(wallet.name.take(1).uppercase(), color = forest, fontWeight = FontWeight.Bold)
+            }
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(wallet.name, color = ink, fontWeight = FontWeight.Medium)
+                Text(money(wallet.balance), color = muted, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
 private fun SwipeCategoryRow(
     name: String,
     icon: String,
@@ -668,6 +845,7 @@ private fun SwipeCategoryRow(
     val actionsWidthPx = with(density) { actionsWidth.toPx() }
     val openThresholdPx = with(density) { 50.dp.toPx() }
     var offsetX by remember(name) { mutableFloatStateOf(0f) }
+    val revealedWidth = with(density) { (-offsetX).toDp() }
     LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
 
     Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
@@ -686,7 +864,7 @@ private fun SwipeCategoryRow(
         }
         Row(
             Modifier.fillMaxWidth()
-                .graphicsLayer { translationX = offsetX }
+                .padding(end = revealedWidth)
                 .background(Color.White, RoundedCornerShape(16.dp))
                 .pointerInput(name, actionsWidthPx) {
                     detectHorizontalDragGestures(
@@ -733,16 +911,20 @@ private fun SettingsCard(icon: ImageVector, title: String, description: String) 
 private fun EditTransactionDialog(
     item: Transaction,
     categoryNames: List<String>,
+    walletNames: List<String>,
     onDismiss: () -> Unit,
-    onSave: (String, String, Double, Boolean, String) -> Unit
+    onSave: (String, String, Double, Boolean, String, String) -> Unit
 ) {
     var title by remember(item.id) { mutableStateOf(item.title) }
     var amount by remember(item.id) { mutableStateOf(item.amount.toString()) }
     var category by remember(item.id) { mutableStateOf(item.category) }
     var income by remember(item.id) { mutableStateOf(item.income) }
     var date by remember(item.id) { mutableStateOf(item.date) }
+    var wallet by remember(item.id) { mutableStateOf(item.wallet) }
     var expanded by remember { mutableStateOf(false) }
+    var walletExpanded by remember { mutableStateOf(false) }
     val categories = (categoryNames + category).distinct()
+    val wallets = (walletNames + wallet).distinct()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -769,13 +951,19 @@ private fun EditTransactionDialog(
                         categories.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { category = it; expanded = false }) }
                     }
                 }
+                Box {
+                    OutlinedButton(onClick = { walletExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("$wallet     ▾", color = ink) }
+                    DropdownMenu(expanded = walletExpanded, onDismissRequest = { walletExpanded = false }) {
+                        wallets.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { wallet = name; walletExpanded = false }) }
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
                     val parsed = amount.toDoubleOrNull()
-                    if (title.isNotBlank() && parsed != null && parsed > 0 && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) onSave(title.trim(), category, parsed, income, date)
+                    if (title.isNotBlank() && parsed != null && parsed > 0 && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) onSave(title.trim(), category, parsed, income, date, wallet)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = forest)
             ) { Text("Save") }
@@ -786,13 +974,15 @@ private fun EditTransactionDialog(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun AddTransactionDialog(categoryNames: List<String>, onDismiss: () -> Unit, onSave: (Transaction) -> Unit) {
+private fun AddTransactionDialog(categoryNames: List<String>, walletNames: List<String>, onDismiss: () -> Unit, onSave: (Transaction) -> Unit) {
     var title by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
     var date by remember { mutableStateOf(currentIsoDate()) }
     var category by remember { mutableStateOf("Food & Drink") }
+    var wallet by remember(walletNames) { mutableStateOf(walletNames.firstOrNull().orEmpty()) }
     var income by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
+    var walletExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     val categories = categoryNames.ifEmpty { listOf("Food & Drink", "Transport", "Home", "Other") }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Add transaction", fontWeight = FontWeight.Bold) },
@@ -812,9 +1002,15 @@ private fun AddTransactionDialog(categoryNames: List<String>, onDismiss: () -> U
                     OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text("$category     ▾", color = ink) }
                     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) { categories.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { category = it; expanded = false }) } }
                 }
+                Box {
+                    OutlinedButton(onClick = { walletExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(if (wallet.isBlank()) "Choose wallet     ▾" else "$wallet     ▾", color = ink) }
+                    DropdownMenu(expanded = walletExpanded, onDismissRequest = { walletExpanded = false }) {
+                        walletNames.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { wallet = name; walletExpanded = false }) }
+                    }
+                }
             }
         },
-        confirmButton = { Button(onClick = { val parsed = amount.toDoubleOrNull(); if (title.isNotBlank() && parsed != null && parsed > 0 && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) onSave(Transaction(0, title.trim(), category, parsed, income, date, date)) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } },
+        confirmButton = { Button(onClick = { val parsed = amount.toDoubleOrNull(); if (title.isNotBlank() && parsed != null && parsed > 0 && wallet.isNotBlank() && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) onSave(Transaction(0, title.trim(), category, parsed, income, date, wallet, date)) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
     if (showDatePicker) {
         val initialDateMillis = remember(date) { epochMillisFromIsoDate(date) }
