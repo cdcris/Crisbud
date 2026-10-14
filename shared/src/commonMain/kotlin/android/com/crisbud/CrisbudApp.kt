@@ -97,7 +97,7 @@ fun CrisbudApp() {
             when (screen) {
                 Screen.Overview -> OverviewScreen(padding, income, spent, monthTransactions, budgets, month, { screen = Screen.Activity })
                 Screen.Activity -> ActivityScreen(
-                    padding, transactions, categories.map { it.first },
+                    padding, transactions, categories.map { it.first }, month,
                     onDelete = { id -> repository.deleteTransaction(id); revision++ },
                     onEdit = { id, title, category, amount, isIncome, date ->
                         repository.updateTransaction(id, title, category, amount, isIncome, date)
@@ -190,16 +190,39 @@ private fun ActivityScreen(
     padding: PaddingValues,
     transactions: List<Transaction>,
     categories: List<String>,
+    month: String,
     onDelete: (Long) -> Unit,
     onEdit: (Long, String, String, Double, Boolean, String) -> Unit
 ) {
     var transactionToDelete by remember { mutableStateOf<Transaction?>(null) }
     var transactionToEdit by remember { mutableStateOf<Transaction?>(null) }
     var actionsForTransaction by remember { mutableStateOf<Long?>(null) }
+    val newestActivityMonth = transactions.maxOfOrNull { it.date.take(7) } ?: month
+    var selectedMonth by remember(month) { mutableStateOf(newestActivityMonth) }
+    var monthMenuExpanded by remember { mutableStateOf(false) }
+    val availableMonths = (transactions.map { it.date.take(7) } + month).distinct().sortedDescending()
+    val visibleTransactions = transactions.filter { it.date.startsWith(selectedMonth) }
     LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(22.dp, 22.dp, 22.dp, 100.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
         item { Text("Activity", fontSize = 28.sp, color = ink, fontWeight = FontWeight.Bold); Text("Your money, one moment at a time", color = muted, fontSize = 14.sp) }
-        item { Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(16.dp)).padding(15.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text("October 2026  ▾", color = ink, fontWeight = FontWeight.SemiBold); Text("${transactions.size} entries", color = muted) } }
-        items(transactions, key = { it.id }) { item ->
+        item {
+            Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(16.dp)).padding(15.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Box {
+                    TextButton(onClick = { monthMenuExpanded = true }) {
+                        Text("${monthLabel(selectedMonth)}  ▾", color = ink, fontWeight = FontWeight.SemiBold)
+                    }
+                    DropdownMenu(expanded = monthMenuExpanded, onDismissRequest = { monthMenuExpanded = false }) {
+                        availableMonths.forEach { availableMonth ->
+                            DropdownMenuItem(
+                                text = { Text(monthLabel(availableMonth)) },
+                                onClick = { selectedMonth = availableMonth; monthMenuExpanded = false }
+                            )
+                        }
+                    }
+                }
+                Text("${visibleTransactions.size} entries", color = muted)
+            }
+        }
+        items(visibleTransactions, key = { it.id }) { item ->
             TransactionRow(
                 item = item,
                 showDelete = actionsForTransaction == item.id,
@@ -384,7 +407,7 @@ private fun EditTransactionDialog(
                     }
                 }
                 OutlinedTextField(title, { title = it }, label = { Text("What was it for?") }, singleLine = true)
-                OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("$") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("₱") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                 OutlinedTextField(date, { date = it }, label = { Text("Date (YYYY-MM-DD)") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
                 Box {
                     OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text("$category     ▾", color = ink) }
@@ -427,7 +450,7 @@ private fun AddTransactionDialog(categoryNames: List<String>, onDismiss: () -> U
                     }
                 }
                 OutlinedTextField(title, { title = it }, label = { Text("What was it for?") }, singleLine = true)
-                OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("$") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("₱") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                 OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
                     Text("Date   ·   $date", color = ink)
                 }
@@ -468,7 +491,7 @@ private fun SimpleEntryDialog(title: String, categories: List<String>, amountLab
                 OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category.ifBlank { "Choose category" }, color = ink) }
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) { categories.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { category = it; expanded = false }) } }
             }
-            OutlinedTextField(amount, { amount = it }, label = { Text(amountLabel) }, prefix = { Text("$") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+            OutlinedTextField(amount, { amount = it }, label = { Text(amountLabel) }, prefix = { Text("₱") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
         }
     }, confirmButton = { Button(onClick = { amount.toDoubleOrNull()?.takeIf { it > 0 }?.let { onSave(category, "", it) } }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
@@ -487,7 +510,7 @@ private fun RecurringEntryDialog(categories: List<String>, onDismiss: () -> Unit
                 OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category.ifBlank { "Choose category" }, color = ink) }
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) { categories.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { category = it; expanded = false }) } }
             }
-            OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("$") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+            OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("₱") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
             OutlinedTextField(dueDay, { dueDay = it.filter(Char::isDigit).take(2) }, label = { Text("Day of month (1–31)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
         }
     }, confirmButton = { Button(onClick = { val value = amount.toDoubleOrNull(); val day = dueDay.toLongOrNull(); if (title.isNotBlank() && value != null && value > 0 && day != null && day in 1..31) onSave(title.trim(), category, value, day) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
@@ -499,10 +522,18 @@ private fun CategoryEntryDialog(onDismiss: () -> Unit, onSave: (String) -> Unit)
     AlertDialog(onDismissRequest = onDismiss, title = { Text("New category") }, text = { OutlinedTextField(name, { name = it }, label = { Text("Category name") }, singleLine = true) }, confirmButton = { Button(onClick = { if (name.isNotBlank()) onSave(name.trim()) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Add") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
-private fun money(value: Double): String = "$" + ((value * 100).toLong() / 100.0).let { amount ->
+private fun money(value: Double): String = "₱" + ((value * 100).toLong() / 100.0).let { amount ->
     val whole = amount.toLong()
     val cents = ((amount - whole) * 100).toInt()
     whole.toString() + "." + if (cents < 10) "0$cents" else cents.toString()
+}
+
+private fun monthLabel(month: String): String {
+    val monthNames = listOf("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+    val year = month.substringBefore('-')
+    val monthNumber = month.substringAfter('-', "").toIntOrNull()
+    val monthName = monthNumber?.let { monthNames.getOrNull(it - 1) }
+    return if (monthName != null) "$monthName $year" else month
 }
 
 @Composable
