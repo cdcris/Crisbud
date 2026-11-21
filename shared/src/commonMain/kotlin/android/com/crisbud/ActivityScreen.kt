@@ -290,9 +290,7 @@ private fun TransactionForm(
     onDismiss: () -> Unit,
     onSave: (Transaction) -> Unit
 ) {
-    val categories = (categoryNames + listOfNotNull(entry?.category)).distinct().ifEmpty {
-        listOf("Food & Drink", "Transport", "Home", "Other")
-    }
+    val categories = categoryNames
     val wallets = (walletNames + listOfNotNull(entry?.wallet)).distinct()
     var description by rememberSaveable(entry?.id) { mutableStateOf(entry?.title.orEmpty()) }
     var amount by rememberSaveable(entry?.id) { mutableStateOf(entry?.amount?.toString().orEmpty()) }
@@ -310,7 +308,7 @@ private fun TransactionForm(
         title = if (entry == null) "New transaction" else "Edit transaction",
         onDismiss = onDismiss,
         actionLabel = if (entry == null) "Add transaction" else "Save changes",
-        saveEnabled = description.isNotBlank() && value != null && millis != null && wallet.isNotBlank(),
+        saveEnabled = description.isNotBlank() && value != null && millis != null && category in categories && wallet in wallets,
         onSave = {
             if (value != null) {
                 onSave(Transaction(entry?.id ?: 0L, description.trim(), category, value, income, date, wallet, date))

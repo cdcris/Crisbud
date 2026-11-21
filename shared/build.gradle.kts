@@ -32,6 +32,9 @@ kotlin {
     sourceSets {
         named("androidHostTest") {
             kotlin.srcDir("src/androidUnitTest/kotlin")
+            dependencies {
+                implementation(libs.sqldelight.jdbc.driver)
+            }
         }
         commonMain.dependencies {
             implementation(libs.sqldelight.runtime)

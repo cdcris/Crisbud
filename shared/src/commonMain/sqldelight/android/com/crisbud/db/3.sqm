@@ -1,0 +1,79 @@
+ALTER TABLE Category RENAME TO Category_legacy;
+ALTER TABLE Wallet RENAME TO Wallet_legacy;
+ALTER TABLE Entries RENAME TO Entries_legacy;
+ALTER TABLE Budget RENAME TO Budget_legacy;
+ALTER TABLE RecurringItem RENAME TO RecurringItem_legacy;
+
+CREATE TABLE Category (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  icon TEXT NOT NULL DEFAULT '•',
+  kind INTEGER NOT NULL DEFAULT 0 CHECK (kind IN (0, 1))
+);
+
+CREATE TABLE Wallet (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  balance REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE Entries (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  category_id INTEGER NOT NULL REFERENCES Category(id) ON DELETE RESTRICT,
+  amount REAL NOT NULL,
+  kind INTEGER NOT NULL CHECK (kind IN (0, 1)),
+  date TEXT NOT NULL,
+  wallet_id INTEGER NOT NULL REFERENCES Wallet(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE Budget (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  category_id INTEGER NOT NULL REFERENCES Category(id) ON DELETE RESTRICT,
+  month TEXT NOT NULL,
+  limit_amount REAL NOT NULL,
+  UNIQUE(category_id, month)
+);
+
+CREATE TABLE RecurringItem (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  category_id INTEGER NOT NULL REFERENCES Category(id) ON DELETE RESTRICT,
+  amount REAL NOT NULL,
+  due_day INTEGER NOT NULL,
+  cadence TEXT NOT NULL DEFAULT 'Monthly',
+  active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX entries_category_kind_date ON Entries(category_id, kind, date);
+CREATE INDEX entries_wallet ON Entries(wallet_id);
+CREATE INDEX recurring_category ON RecurringItem(category_id);
+
+INSERT INTO Category(name, icon, kind)
+SELECT name, icon, CASE WHEN is_income <> 0 THEN 1 ELSE 0 END FROM Category_legacy;
+
+-- Repair names that older versions allowed without a matching category.
+INSERT OR IGNORE INTO Category(name)
+SELECT category FROM Entries_legacy
+UNION SELECT category FROM Budget_legacy
+UNION SELECT category FROM RecurringItem_legacy;
+
+INSERT INTO Wallet(name, balance) SELECT name, balance FROM Wallet_legacy;
+INSERT OR IGNORE INTO Wallet(name) SELECT DISTINCT wallet FROM Entries_legacy;
+
+INSERT INTO Entries(id, title, category_id, amount, kind, date, wallet_id)
+SELECT e.id, e.title, c.id, e.amount, CASE WHEN e.income <> 0 THEN 1 ELSE 0 END, e.date, w.id
+FROM Entries_legacy e JOIN Category c ON c.name = e.category JOIN Wallet w ON w.name = e.wallet;
+
+INSERT INTO Budget(id, category_id, month, limit_amount)
+SELECT b.id, c.id, b.month, b.limit_amount FROM Budget_legacy b JOIN Category c ON c.name = b.category;
+
+INSERT INTO RecurringItem(id, title, category_id, amount, due_day, cadence, active)
+SELECT r.id, r.title, c.id, r.amount, r.due_day, r.cadence, r.active
+FROM RecurringItem_legacy r JOIN Category c ON c.name = r.category;
+
+DROP TABLE Entries_legacy;
+DROP TABLE Budget_legacy;
+DROP TABLE RecurringItem_legacy;
+DROP TABLE Category_legacy;
+DROP TABLE Wallet_legacy;

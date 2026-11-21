@@ -1,54 +1,62 @@
-CREATE TABLE Entries (
+import android.com.crisbud.db.RecordKind;
+
+CREATE TABLE Category (
   id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-  title TEXT NOT NULL,
-  category TEXT NOT NULL,
-  amount REAL NOT NULL,
-  income INTEGER AS kotlin.Boolean NOT NULL,
-  date TEXT NOT NULL,
-  wallet TEXT NOT NULL DEFAULT 'Cash'
+  name TEXT NOT NULL UNIQUE,
+  icon TEXT NOT NULL DEFAULT '•',
+  kind INTEGER AS RecordKind NOT NULL DEFAULT 0 CHECK (kind IN (0, 1))
 );
 
 CREATE TABLE Wallet (
-  name TEXT NOT NULL PRIMARY KEY,
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
   balance REAL NOT NULL DEFAULT 0
 );
 
-CREATE TABLE Category (
-  name TEXT NOT NULL PRIMARY KEY,
-  icon TEXT NOT NULL DEFAULT '•',
-  is_income INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0
+CREATE TABLE Entries (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  category_id INTEGER NOT NULL REFERENCES Category(id) ON DELETE RESTRICT,
+  amount REAL NOT NULL,
+  kind INTEGER AS RecordKind NOT NULL CHECK (kind IN (0, 1)),
+  date TEXT NOT NULL,
+  wallet_id INTEGER NOT NULL REFERENCES Wallet(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE Budget (
   id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-  category TEXT NOT NULL,
+  category_id INTEGER NOT NULL REFERENCES Category(id) ON DELETE RESTRICT,
   month TEXT NOT NULL,
   limit_amount REAL NOT NULL,
-  UNIQUE(category, month)
+  UNIQUE(category_id, month)
 );
 
 CREATE TABLE RecurringItem (
   id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
-  category TEXT NOT NULL,
+  category_id INTEGER NOT NULL REFERENCES Category(id) ON DELETE RESTRICT,
   amount REAL NOT NULL,
   due_day INTEGER NOT NULL,
   cadence TEXT NOT NULL DEFAULT 'Monthly',
   active INTEGER AS kotlin.Boolean NOT NULL DEFAULT 1
 );
 
-selectTransactions:
-SELECT * FROM Entries ORDER BY date DESC, id DESC;
+CREATE INDEX entries_category_kind_date ON Entries(category_id, kind, date);
+CREATE INDEX entries_wallet ON Entries(wallet_id);
+CREATE INDEX recurring_category ON RecurringItem(category_id);
 
-selectTransactionsForMonth:
-SELECT * FROM Entries WHERE substr(date, 1, 7) = ? ORDER BY date DESC, id DESC;
+selectTransactions:
+SELECT e.id, e.title, c.name AS category, e.amount, e.kind, e.date, w.name AS wallet
+FROM Entries e JOIN Category c ON c.id = e.category_id JOIN Wallet w ON w.id = e.wallet_id
+WHERE :month IS NULL OR substr(e.date, 1, 7) = :month
+ORDER BY e.date DESC, e.id DESC;
 
 insertTransaction:
-INSERT INTO Entries(title, category, amount, income, date, wallet)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO Entries(id, title, category_id, amount, kind, date, wallet_id)
+VALUES (?, ?, ?, ?, ?, ?, ?);
 
 updateTransaction:
-UPDATE Entries SET title = ?, category = ?, amount = ?, income = ?, date = ?, wallet = ? WHERE id = ?;
+UPDATE Entries SET title = ?, category_id = ?, amount = ?, kind = ?, date = ?, wallet_id = ? WHERE id = ?;
 
 deleteTransaction:
 DELETE FROM Entries WHERE id = ?;
@@ -56,95 +64,111 @@ DELETE FROM Entries WHERE id = ?;
 selectWallets:
 SELECT * FROM Wallet ORDER BY name;
 
+walletId:
+SELECT id FROM Wallet WHERE name = ?;
+
 walletNameConflictCount:
-SELECT COUNT(*) AS conflict_count FROM Wallet WHERE lower(name) = lower(?) AND name != ?;
+SELECT COUNT(*) FROM Wallet WHERE lower(name) = lower(?) AND name != ?;
 
 updateWalletBalance:
 UPDATE Wallet SET balance = ? WHERE name = ?;
 
-insertWallet:
+ensureWallet:
 INSERT OR IGNORE INTO Wallet(name) VALUES (?);
+
+restoreWallet:
+INSERT INTO Wallet(name, balance) VALUES (?, ?);
 
 renameWallet:
 UPDATE Wallet SET name = ? WHERE name = ?;
 
-renameEntryWallet:
-UPDATE Entries SET wallet = ? WHERE wallet = ?;
-
 walletUsageCount:
-SELECT COUNT(*) FROM Entries WHERE wallet = ?;
+SELECT COUNT(*) FROM Entries WHERE wallet_id = ?;
 
 deleteWallet:
-DELETE FROM Wallet WHERE name = ?;
+DELETE FROM Wallet WHERE id = ?;
 
 selectCategories:
 SELECT * FROM Category ORDER BY name;
 
-insertCategory:
-INSERT OR IGNORE INTO Category(name, icon, is_income) VALUES (?, ?, ?);
+categoryId:
+SELECT id FROM Category WHERE name = ?;
+
+ensureCategory:
+INSERT OR IGNORE INTO Category(name, icon, kind) VALUES (?, ?, ?);
+
+restoreCategory:
+INSERT INTO Category(name, icon, kind) VALUES (?, ?, ?);
 
 renameCategory:
 UPDATE Category SET name = ? WHERE name = ?;
 
-renameEntryCategory:
-UPDATE Entries SET category = ? WHERE category = ?;
-
-renameBudgetCategory:
-UPDATE Budget SET category = ? WHERE category = ?;
-
-renameRecurringCategory:
-UPDATE RecurringItem SET category = ? WHERE category = ?;
-
 categoryUsageCount:
-SELECT (SELECT COUNT(*) FROM Entries WHERE category = ?) +
-  (SELECT COUNT(*) FROM Budget WHERE category = ?) +
-  (SELECT COUNT(*) FROM RecurringItem WHERE category = ?) AS usage_count;
-
-countCategoryBudgetConflicts:
-SELECT COUNT(*) AS conflict_count FROM Budget old
-JOIN Budget existing ON existing.month = old.month
-WHERE old.category = ? AND existing.category = ?;
+SELECT (SELECT COUNT(*) FROM Entries WHERE category_id = :id) +
+  (SELECT COUNT(*) FROM Budget WHERE category_id = :id) +
+  (SELECT COUNT(*) FROM RecurringItem WHERE category_id = :id) AS usage_count;
 
 deleteCategory:
-DELETE FROM Category WHERE name = ?;
+DELETE FROM Category WHERE id = ?;
 
 selectBudgetsForMonth:
-SELECT Budget.id, Budget.category, Budget.month, Budget.limit_amount,
-  COALESCE((SELECT SUM(Entries.amount) FROM Entries
-    WHERE Entries.category = Budget.category AND Entries.income = 0
-      AND substr(Entries.date, 1, 7) = Budget.month), 0.0) AS spent
-FROM Budget WHERE month = ? ORDER BY category;
+SELECT b.id, c.name AS category, b.month, b.limit_amount,
+  COALESCE((SELECT SUM(e.amount) FROM Entries e
+    WHERE e.category_id = b.category_id AND e.kind = 0
+      AND substr(e.date, 1, 7) = b.month), 0.0) AS spent
+FROM Budget b JOIN Category c ON c.id = b.category_id
+WHERE b.month = ? ORDER BY c.name;
 
 insertBudget:
-INSERT OR REPLACE INTO Budget(category, month, limit_amount) VALUES (?, ?, ?);
+INSERT OR REPLACE INTO Budget(category_id, month, limit_amount) VALUES (?, ?, ?);
+
+restoreBudget:
+INSERT INTO Budget(id, category_id, month, limit_amount) VALUES (?, ?, ?, ?);
 
 updateBudget:
-UPDATE Budget SET category = ?, limit_amount = ? WHERE id = ?;
+UPDATE Budget SET category_id = ?, limit_amount = ? WHERE id = ?;
 
 deleteBudget:
 DELETE FROM Budget WHERE id = ?;
 
 selectRecurringItems:
-SELECT * FROM RecurringItem WHERE active = 1 ORDER BY due_day;
+SELECT r.id, r.title, c.name AS category, r.amount, r.due_day, r.cadence
+FROM RecurringItem r JOIN Category c ON c.id = r.category_id
+WHERE r.active = 1 ORDER BY r.due_day;
 
 insertRecurringItem:
-INSERT INTO RecurringItem(title, category, amount, due_day, cadence, active)
+INSERT INTO RecurringItem(title, category_id, amount, due_day, cadence, active)
 VALUES (?, ?, ?, ?, ?, 1);
 
+restoreRecurringItem:
+INSERT INTO RecurringItem(id, title, category_id, amount, due_day, cadence, active)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
 updateRecurringItem:
-UPDATE RecurringItem SET title = ?, category = ?, amount = ?, due_day = ? WHERE id = ?;
+UPDATE RecurringItem SET title = ?, category_id = ?, amount = ?, due_day = ? WHERE id = ?;
 
 deleteRecurringItem:
 UPDATE RecurringItem SET active = 0 WHERE id = ?;
 
-exportTransactions:
-SELECT * FROM Entries ORDER BY id;
-
 exportBudgets:
-SELECT * FROM Budget ORDER BY month, category;
-
-exportCategories:
-SELECT * FROM Category ORDER BY name;
+SELECT b.id, c.name AS category, b.month, b.limit_amount
+FROM Budget b JOIN Category c ON c.id = b.category_id ORDER BY b.month, c.name;
 
 exportRecurringItems:
-SELECT * FROM RecurringItem ORDER BY id;
+SELECT r.id, r.title, c.name AS category, r.amount, r.due_day, r.cadence, r.active
+FROM RecurringItem r JOIN Category c ON c.id = r.category_id ORDER BY r.id;
+
+clearEntries:
+DELETE FROM Entries;
+
+clearBudgets:
+DELETE FROM Budget;
+
+clearRecurringItems:
+DELETE FROM RecurringItem;
+
+clearCategories:
+DELETE FROM Category;
+
+clearWallets:
+DELETE FROM Wallet;
