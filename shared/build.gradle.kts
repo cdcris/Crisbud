@@ -11,6 +11,8 @@ kotlin {
         namespace = "android.com.crisbud"
         compileSdk = 35
         minSdk = 30
+        androidResources.enable = true
+        withHostTest {}
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
         }
@@ -28,11 +30,15 @@ kotlin {
     }
 
     sourceSets {
+        named("androidHostTest") {
+            kotlin.srcDir("src/androidUnitTest/kotlin")
+        }
         commonMain.dependencies {
             implementation(libs.sqldelight.runtime)
             implementation(compose.runtime)
+            implementation(compose.components.resources)
             implementation(compose.foundation)
-            implementation(compose.material3)
+            implementation(libs.compose.material3)
             implementation(compose.materialIconsExtended)
             implementation(compose.ui)
         }
@@ -47,6 +53,10 @@ kotlin {
             implementation(libs.kotlin.test)
         }
     }
+}
+
+compose.resources {
+    packageOfResClass = "android.com.crisbud.resources"
 }
 
 sqldelight {

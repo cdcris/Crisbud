@@ -1,1138 +1,222 @@
 package android.com.crisbud
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import android.com.crisbud.db.BudgetRepository
+import android.com.crisbud.db.currentIsoDate
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Category
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.ReceiptLong
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Savings
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.material3.ExperimentalMaterial3Api
-import android.com.crisbud.db.BudgetRepository
-import android.com.crisbud.db.StoredWallet
-import android.com.crisbud.db.currentIsoDate
-import android.com.crisbud.db.epochMillisFromIsoDate
-import android.com.crisbud.db.isoDateFromEpochMillis
-import android.com.crisbud.db.SqlFileActions
-
-private val forest = Color(0xFF315D4B)
-private val mint = Color(0xFFDDEEE3)
-private val ink = Color(0xFF17251E)
-private val muted = Color(0xFF68776D)
-private val orange = Color(0xFFB76E26)
+import kotlin.math.abs
+import kotlin.math.roundToLong
 
 private enum class Screen(val title: String, val icon: ImageVector) {
-    Overview("Overview", Icons.Default.Home),
-    Activity("Activity", Icons.Default.ReceiptLong),
-    Budgets("Budgets", Icons.Default.Savings),
-    Settings("Settings", Icons.Default.Settings)
+    Overview("Overview", Icons.Rounded.SpaceDashboard),
+    Activity("Activity", Icons.Rounded.SwapVert),
+    Budgets("Budgets", Icons.Rounded.DonutLarge),
+    Settings("Settings", Icons.Rounded.Tune)
 }
 
-private data class Transaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val date: String, val wallet: String, val day: String)
-private data class Budget(val id: Long, val category: String, val spent: Double, val limit: Double, val icon: String)
-private data class Recurring(val id: Long, val title: String, val category: String, val amount: Double, val dueDay: Long)
+internal data class Transaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val date: String, val wallet: String, val day: String)
+internal data class Budget(val id: Long, val category: String, val spent: Double, val limit: Double) {
+    val utilization: Double get() = if (limit > 0.0) spent / limit else 0.0
+}
+internal data class Recurring(val id: Long, val title: String, val category: String, val amount: Double, val dueDay: Long)
+
 @Composable
 fun CrisbudApp() {
-    var screen by remember { mutableStateOf(Screen.Overview) }
-    var showEntry by remember { mutableStateOf(false) }
+    var screen by rememberSaveable { mutableStateOf(Screen.Overview) }
+    var showEntry by rememberSaveable { mutableStateOf(false) }
     var fileMessage by remember { mutableStateOf<String?>(null) }
     var revision by remember { mutableIntStateOf(0) }
     val repository = remember { BudgetRepository() }
     val today = remember { currentIsoDate() }
-    val month = today.substring(0, 7)
-    LaunchedEffect(Unit) { repository.seedIfNeeded(month); revision++ }
-    val storedTransactions = remember(revision) { repository.transactions() }
-    val currentMonthTransactions = remember(revision) { repository.transactions(month) }
+    val month = today.take(7)
+    LaunchedEffect(month) {
+        repository.seedIfNeeded(month)
+        revision++
+    }
+
     val categories = remember(revision) { repository.categories() }
     val walletBalances = remember(revision) { repository.walletBalances() }
     val wallets = walletBalances.map { it.name }
-    val budgets = remember(revision) { repository.budgets(month).map { stored -> Budget(stored.id, stored.category, stored.spent, stored.limit, categories.firstOrNull { it.first == stored.category }?.second ?: "•") } }
+    val transactions = remember(revision, today) {
+        repository.transactions().map {
+            Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, it.wallet, if (it.date == today) "Today" else it.date)
+        }
+    }
+    val monthTransactions = remember(transactions, month) { transactions.filter { it.date.take(7) == month } }
+    val budgets = remember(revision, month) { repository.budgets(month).map { Budget(it.id, it.category, it.spent, it.limit) } }
     val recurring = remember(revision) { repository.recurring().map { Recurring(it.id, it.title, it.category, it.amount, it.dueDay) } }
-    val transactions = storedTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, it.wallet, if (it.date == today) "Today" else it.date) }
-    val monthTransactions = currentMonthTransactions.map { Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, it.wallet, if (it.date == today) "Today" else it.date) }
-    val spent = monthTransactions.filter { !it.income }.sumOf { it.amount }
-    val income = monthTransactions.filter { it.income }.sumOf { it.amount }
+    val screenStates = rememberSaveableStateHolder()
 
     CrisbudTheme {
-        Scaffold(
-            containerColor = Color(0xFFF6F8F4),
-            bottomBar = {
-                NavigationBar(containerColor = Color.White) {
-                    Screen.values().forEach { item ->
-                        NavigationBarItem(selected = screen == item, onClick = { screen = item },
-                            icon = { Icon(item.icon, contentDescription = item.title) }, label = { Text(item.title) },
-                            colors = NavigationBarItemDefaults.colors(selectedIconColor = forest, selectedTextColor = forest, indicatorColor = mint))
+        CompositionLocalProvider(LocalCategoryIcons provides remember(categories) { categories.toMap() }) {
+            AppFrame(screen, onSelect = { screen = it }, onAdd = { showEntry = true }) { padding ->
+                screenStates.SaveableStateProvider(screen.name) {
+                    when (screen) {
+                        Screen.Overview -> OverviewScreen(
+                            padding, monthTransactions, budgets, month,
+                            onBudgets = { screen = Screen.Budgets }, onActivity = { screen = Screen.Activity }
+                        )
+                        Screen.Activity -> ActivityScreen(
+                            padding, transactions, categories.map { it.first }, wallets, month,
+                            onDelete = { repository.deleteTransaction(it); revision++ },
+                            onEdit = { id, title, category, amount, income, date, wallet ->
+                                repository.updateTransaction(id, title, category, amount, income, date, wallet)
+                                revision++
+                            }
+                        )
+                        Screen.Budgets -> BudgetsScreen(
+                            padding, budgets, recurring, categories,
+                            onAddBudget = { category, limit -> repository.addBudget(category, month, limit); revision++ },
+                            onEditBudget = { id, category, limit -> repository.updateBudget(id, category, limit); revision++ },
+                            onDeleteBudget = { repository.deleteBudget(it); revision++ },
+                            onAddRecurring = { title, category, amount, day -> repository.addRecurring(title, category, amount, day); revision++ },
+                            onEditRecurring = { id, title, category, amount, day -> repository.updateRecurring(id, title, category, amount, day); revision++ },
+                            onDeleteRecurring = { repository.deleteRecurring(it); revision++ }
+                        )
+                        Screen.Settings -> SettingsScreen(
+                            padding, categories, walletBalances,
+                            onAddCategory = { repository.addCategory(it); revision++ },
+                            onRenameCategory = { old, new -> repository.renameCategory(old, new).also { if (it) revision++ } },
+                            onDeleteCategory = { name -> repository.deleteCategory(name).also { if (it) revision++ } },
+                            onAddWallet = { repository.addWallet(it); revision++ },
+                            onRenameWallet = { old, new -> repository.renameWallet(old, new).also { if (it) revision++ } },
+                            onDeleteWallet = { name -> repository.deleteWallet(name).also { if (it) revision++ } },
+                            onSetWalletBalance = { name, amount -> repository.updateWalletBalance(name, amount); revision++ },
+                            sql = repository::exportSql,
+                            onSqlImported = { sql -> repository.importSql(sql); revision++ },
+                            onFileMessage = { fileMessage = it }
+                        )
                     }
-                }
-            },
-            floatingActionButton = {
-                if (screen != Screen.Settings) FloatingActionButton(onClick = { showEntry = true }, containerColor = forest, contentColor = Color.White) {
-                    Icon(Icons.Default.Add, contentDescription = "Add transaction")
                 }
             }
-        ) { padding ->
-            when (screen) {
-                Screen.Overview -> OverviewScreen(padding, income, spent, monthTransactions, budgets, month, { screen = Screen.Activity })
-                Screen.Activity -> ActivityScreen(
-                    padding, transactions, categories.map { it.first }, month,
-                    onDelete = { id -> repository.deleteTransaction(id); revision++ },
-                    onEdit = { id, title, category, amount, isIncome, date, wallet ->
-                        repository.updateTransaction(id, title, category, amount, isIncome, date, wallet)
-                        revision++
-                    }
+            if (showEntry) {
+                AddTransactionDialog(categories.map { it.first }, wallets, onDismiss = { showEntry = false }) {
+                    repository.addTransaction(it.title, it.category, it.amount, it.income, it.date, it.wallet)
+                    revision++
+                    showEntry = false
+                }
+            }
+            fileMessage?.let { message ->
+                AlertDialog(
+                    onDismissRequest = { fileMessage = null },
+                    icon = { Icon(Icons.Rounded.ImportExport, null) },
+                    title = { Text("Data transfer") },
+                    text = { Text(message) },
+                    confirmButton = { Button(onClick = { fileMessage = null }) { Text("Done") } }
                 )
-                Screen.Budgets -> BudgetsScreen(padding, budgets, recurring, categories,
-                    onAddBudget = { category, limit -> repository.addBudget(category, month, limit); revision++ },
-                    onEditBudget = { id, category, limit -> repository.updateBudget(id, category, limit); revision++ },
-                    onDeleteBudget = { id -> repository.deleteBudget(id); revision++ },
-                    onAddRecurring = { title, category, amount, dueDay -> repository.addRecurring(title, category, amount, dueDay); revision++ },
-                    onEditRecurring = { id, title, category, amount, dueDay -> repository.updateRecurring(id, title, category, amount, dueDay); revision++ },
-                    onDeleteRecurring = { id -> repository.deleteRecurring(id); revision++ })
-                Screen.Settings -> SettingsScreen(
-                    padding,
-                    categories,
-                    walletBalances,
-                    onAddCategory = { name -> repository.addCategory(name); revision++ },
-                    onRenameCategory = { oldName, newName -> repository.renameCategory(oldName, newName).also { if (it) revision++ } },
-                    onDeleteCategory = { name -> repository.deleteCategory(name).also { if (it) revision++ } },
-                    onAddWallet = { name -> repository.addWallet(name); revision++ },
-                    onRenameWallet = { oldName, newName -> repository.renameWallet(oldName, newName).also { if (it) revision++ } },
-                    onDeleteWallet = { name -> repository.deleteWallet(name).also { if (it) revision++ } },
-                    onSetWalletBalance = { name, balance -> repository.updateWalletBalance(name, balance); revision++ },
-                    sql = { repository.exportSql() },
-                    onSqlImported = { sql -> runCatching { repository.importSql(sql); revision++ }.onFailure { fileMessage = it.message ?: "Import failed." } },
-                    onFileMessage = { fileMessage = it }
-                )
             }
         }
-        if (showEntry) AddTransactionDialog(categoryNames = categories.map { it.first }, walletNames = wallets, onDismiss = { showEntry = false }, onSave = { item ->
-            repository.addTransaction(item.title, item.category, item.amount, item.income, item.date, item.wallet)
-            revision++
-            showEntry = false
-        })
-        if (fileMessage != null) AlertDialog(onDismissRequest = { fileMessage = null }, title = { Text("Data transfer") }, text = { Text(fileMessage!!) }, confirmButton = { TextButton(onClick = { fileMessage = null }) { Text("Done") } })
     }
 }
 
 @Composable
-private fun OverviewScreen(padding: PaddingValues, income: Double, spent: Double, transactions: List<Transaction>, budgets: List<Budget>, month: String, onSeeAll: () -> Unit) {
-    LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 100.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column { Text("Good morning,", color = muted, fontSize = 14.sp); Text("Let’s check in", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = ink) }
-                Box(Modifier.size(44.dp).background(mint, CircleShape), contentAlignment = Alignment.Center) { Text("🌿", fontSize = 22.sp) }
-            }
-        }
-        item {
-            Column(Modifier.fillMaxWidth().background(forest, RoundedCornerShape(24.dp)).padding(22.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("${month.uppercase()} OVERVIEW", color = Color.White.copy(alpha = .75f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Text("This month", color = Color.White, fontSize = 13.sp)
-                }
-                Spacer(Modifier.height(20.dp)); Text("Available this month", color = Color.White.copy(alpha = .8f), fontSize = 14.sp)
-                Text(money(income - spent), color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(18.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SummaryPill("↘", "Spent", money(spent), Modifier.weight(1f))
-                    SummaryPill("↗", "Income", money(income), Modifier.weight(1f))
-                }
-            }
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Monthly budgets", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = ink)
-                Text("See all", color = forest, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable(onClick = onSeeAll))
-            }
-        }
-        items(budgets.take(2)) { BudgetCard(it) }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Recent activity", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = ink)
-                Text("See all", color = forest, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onSeeAll))
-            }
-        }
-        items(transactions.take(3)) { TransactionRow(it) }
-    }
-}
-
-@Composable
-private fun SummaryPill(symbol: String, label: String, value: String, modifier: Modifier) {
-    Row(modifier.background(Color.White.copy(alpha = .12f), RoundedCornerShape(14.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        Text(symbol, color = Color.White, fontSize = 17.sp)
-        Column { Text(label, color = Color.White.copy(alpha = .72f), fontSize = 11.sp); Text(value, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
-    }
-}
-
-@Composable
-private fun BudgetCard(budget: Budget) {
-    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).padding(16.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).background(mint, RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) { Text(budget.icon, fontSize = 18.sp) }
-            Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(budget.category, color = ink, fontWeight = FontWeight.SemiBold); Text("${money(budget.limit - budget.spent)} left", color = muted, fontSize = 12.sp) }
-            Text("${(budget.spent / budget.limit * 100).toInt()}%", color = forest, fontWeight = FontWeight.Bold)
-        }
-        Spacer(Modifier.height(14.dp))
-        LinearProgressIndicator(progress = { (budget.spent / budget.limit).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(7.dp), color = if (budget.spent / budget.limit > .85) orange else forest, trackColor = mint)
-        Spacer(Modifier.height(8.dp)); Text("${money(budget.spent)} of ${money(budget.limit)}", color = muted, fontSize = 11.sp)
-    }
-}
-
-@Composable
-private fun BudgetActionRow(
-    budget: Budget,
-    showActions: Boolean,
-    onSwipeStateChange: (Boolean) -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
+private fun AppFrame(
+    screen: Screen,
+    onSelect: (Screen) -> Unit,
+    onAdd: () -> Unit,
+    content: @Composable (PaddingValues) -> Unit
 ) {
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val actionsWidth = 100.dp
-    val actionsWidthPx = with(density) { actionsWidth.toPx() }
-    val openThresholdPx = with(density) { 50.dp.toPx() }
-    var offsetX by remember(budget.id) { mutableFloatStateOf(0f) }
-    val revealedWidth = with(density) { (-offsetX).toDp() }
-    LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
-
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))) {
-        Row(
-            Modifier.align(Alignment.CenterEnd).width(actionsWidth),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp)).clickable(onClick = onEdit).padding(10.dp)) {
-                Icon(Icons.Default.Edit, contentDescription = "Edit ${budget.category} budget", tint = forest)
-            }
-            Spacer(Modifier.width(6.dp))
-            Box(Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp)).clickable(onClick = onDelete).padding(10.dp)) {
-                Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${budget.category} budget", tint = Color(0xFF8C1D18))
-            }
-        }
-        Box(
-            Modifier.fillMaxWidth()
-                .padding(end = revealedWidth)
-                .pointerInput(budget.id, actionsWidthPx) {
-                    detectHorizontalDragGestures(
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            offsetX = (offsetX + dragAmount).coerceIn(-actionsWidthPx, 0f)
-                        },
-                        onDragEnd = {
-                            val open = offsetX <= -openThresholdPx
-                            offsetX = if (open) -actionsWidthPx else 0f
-                            onSwipeStateChange(open)
-                        }
-                    )
-                }
-        ) {
-            BudgetCard(budget)
-        }
-    }
-}
-
-@Composable
-private fun EditBudgetDialog(
-    budget: Budget,
-    categories: List<String>,
-    onDismiss: () -> Unit,
-    onSave: (String, Double) -> Unit
-) {
-    var category by remember(budget.id) { mutableStateOf(budget.category) }
-    var amount by remember(budget.id) { mutableStateOf(budget.limit.toString()) }
-    var expanded by remember { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Edit category budget") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box {
-                OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category, color = ink) }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    categories.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { category = name; expanded = false }) }
-                }
-            }
-            OutlinedTextField(amount, { amount = it }, label = { Text("Monthly limit") }, prefix = { Text("₱") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
-        }
-    }, confirmButton = {
-        Button(onClick = { amount.toDoubleOrNull()?.takeIf { it > 0 }?.let { onSave(category, it) } }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") }
-    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
-}
-
-@Composable
-private fun ActivityScreen(
-    padding: PaddingValues,
-    transactions: List<Transaction>,
-    categories: List<String>,
-    month: String,
-    onDelete: (Long) -> Unit,
-    onEdit: (Long, String, String, Double, Boolean, String, String) -> Unit
-) {
-    var transactionToDelete by remember { mutableStateOf<Transaction?>(null) }
-    var transactionToEdit by remember { mutableStateOf<Transaction?>(null) }
-    var actionsForTransaction by remember { mutableStateOf<Long?>(null) }
-    val newestActivityMonth = transactions.maxOfOrNull { it.date.take(7) } ?: month
-    var selectedMonth by remember(month) { mutableStateOf(newestActivityMonth) }
-    var monthMenuExpanded by remember { mutableStateOf(false) }
-    val availableMonths = (transactions.map { it.date.take(7) } + month).distinct().sortedDescending()
-    val visibleTransactions = transactions.filter { it.date.startsWith(selectedMonth) }
-    LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(22.dp, 22.dp, 22.dp, 100.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-        item { Text("Activity", fontSize = 28.sp, color = ink, fontWeight = FontWeight.Bold); Text("Your money, one moment at a time", color = muted, fontSize = 14.sp) }
-        item {
-            Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(16.dp)).padding(15.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Box {
-                    TextButton(onClick = { monthMenuExpanded = true }) {
-                        Text("${monthLabel(selectedMonth)}  ▾", color = ink, fontWeight = FontWeight.SemiBold)
-                    }
-                    DropdownMenu(expanded = monthMenuExpanded, onDismissRequest = { monthMenuExpanded = false }) {
-                        availableMonths.forEach { availableMonth ->
-                            DropdownMenuItem(
-                                text = { Text(monthLabel(availableMonth)) },
-                                onClick = { selectedMonth = availableMonth; monthMenuExpanded = false }
+    val colors = MaterialTheme.colorScheme
+    Surface(color = colors.background) {
+        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+            val wide = maxWidth >= 720.dp
+            Row(Modifier.fillMaxSize()) {
+                if (wide) {
+                    NavigationRail(containerColor = colors.surface, windowInsets = WindowInsets(0)) {
+                        Spacer(Modifier.height(12.dp))
+                        Screen.entries.forEach { item ->
+                            NavigationRailItem(
+                                selected = screen == item, onClick = { onSelect(item) },
+                                icon = { Icon(item.icon, null) }, label = { Text(item.title) }
                             )
                         }
                     }
                 }
-                Text("${visibleTransactions.size} entries", color = muted)
-            }
-        }
-        items(visibleTransactions, key = { it.id }) { item ->
-            TransactionRow(
-                item = item,
-                showDelete = actionsForTransaction == item.id,
-                onSwipeStateChange = { isOpen -> actionsForTransaction = if (isOpen) item.id else null },
-                onEditClick = { transactionToEdit = item },
-                onDeleteClick = { transactionToDelete = item }
-            )
-        }
-    }
-    transactionToDelete?.let { item ->
-        AlertDialog(
-            onDismissRequest = { transactionToDelete = null },
-            title = { Text("Delete activity?") },
-            text = { Text("\"${item.title}\" will be permanently removed.") },
-            confirmButton = {
-                TextButton(onClick = { onDelete(item.id); transactionToDelete = null }) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = { TextButton(onClick = { transactionToDelete = null }) { Text("Cancel") } }
-        )
-    }
-    transactionToEdit?.let { item ->
-        EditTransactionDialog(
-            item = item,
-            categoryNames = categories,
-            walletNames = transactions.map { it.wallet }.distinct(),
-            onDismiss = { transactionToEdit = null },
-            onSave = { title, category, amount, income, date, wallet ->
-                onEdit(item.id, title, category, amount, income, date, wallet)
-                transactionToEdit = null
-                actionsForTransaction = null
-            }
-        )
-    }
-}
-
-@Composable
-private fun TransactionRow(
-    item: Transaction,
-    showDelete: Boolean = false,
-    onSwipeStateChange: ((Boolean) -> Unit)? = null,
-    onEditClick: (() -> Unit)? = null,
-    onDeleteClick: (() -> Unit)? = null
-) {
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val actionsWidth = 100.dp
-    val actionsWidthPx = with(density) { actionsWidth.toPx() }
-    val openThresholdPx = with(density) { 72.dp.toPx() }
-    var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
-    val revealedWidth = with(density) { (-offsetX).toDp() }
-    LaunchedEffect(showDelete) { offsetX = if (showDelete) -actionsWidthPx else 0f }
-
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
-        if (onSwipeStateChange != null) {
-            Row(Modifier.align(Alignment.CenterEnd).width(actionsWidth), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp)).clickable { onSwipeStateChange(false); onEditClick?.invoke() }.padding(10.dp)) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit ${item.title}", tint = forest)
-                }
-                Spacer(Modifier.width(6.dp))
-                Box(Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp)).clickable { onSwipeStateChange(false); onDeleteClick?.invoke() }.padding(10.dp)) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${item.title}", tint = Color(0xFF8C1D18))
-                }
-            }
-        }
-        Row(
-            Modifier.fillMaxWidth()
-                .padding(end = revealedWidth)
-                .background(Color.White, RoundedCornerShape(16.dp))
-                .then(if (onSwipeStateChange != null) Modifier.pointerInput(item.id, actionsWidthPx) {
-                    detectHorizontalDragGestures(
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            offsetX = (offsetX + dragAmount).coerceIn(-actionsWidthPx, 0f)
-                        },
-                        onDragEnd = {
-                            val open = offsetX <= -openThresholdPx
-                            offsetX = if (open) -actionsWidthPx else 0f
-                            onSwipeStateChange(open)
+                Scaffold(
+                    modifier = Modifier.weight(1f),
+                    contentWindowInsets = WindowInsets(0),
+                    containerColor = colors.background,
+                    topBar = { Masthead(showAdd = screen != Screen.Settings, onAdd = onAdd) },
+                    bottomBar = {
+                        if (!wide) {
+                            Column {
+                                HorizontalDivider(color = colors.outlineVariant)
+                                NavigationBar(containerColor = colors.surface, windowInsets = WindowInsets(0), tonalElevation = 0.dp) {
+                                    Screen.entries.forEach { item ->
+                                        NavigationBarItem(
+                                            selected = screen == item, onClick = { onSelect(item) },
+                                            icon = { Icon(item.icon, null) }, label = { Text(item.title) },
+                                            colors = NavigationBarItemDefaults.colors(
+                                                indicatorColor = colors.primary,
+                                                selectedIconColor = colors.onPrimary,
+                                                selectedTextColor = colors.primary,
+                                                unselectedIconColor = colors.onSurfaceVariant
+                                            )
+                                        )
+                                    }
+                                }
+                            }
                         }
-                    )
-                } else Modifier)
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.size(42.dp).background(if (item.income) mint else Color(0xFFF5F0E9), RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
-                Icon(if (item.income) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward, contentDescription = null, tint = if (item.income) forest else orange)
+                    }
+                ) { padding ->
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                        Box(Modifier.widthIn(max = 840.dp).fillMaxSize()) { content(padding) }
+                    }
+                }
             }
-            Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(item.title, fontWeight = FontWeight.SemiBold, color = ink); Text("${item.category}  ·  ${item.wallet}  ·  ${item.day}", color = muted, fontSize = 12.sp) }
-            Text((if (item.income) "+" else "−") + money(item.amount), color = if (item.income) forest else ink, fontWeight = FontWeight.Bold)
         }
     }
 }
 
 @Composable
-private fun BudgetsScreen(padding: PaddingValues, budgets: List<Budget>, recurring: List<Recurring>, categories: List<Pair<String, String>>, onAddBudget: (String, Double) -> Unit, onEditBudget: (Long, String, Double) -> Unit, onDeleteBudget: (Long) -> Unit, onAddRecurring: (String, String, Double, Long) -> Unit, onEditRecurring: (Long, String, String, Double, Long) -> Unit, onDeleteRecurring: (Long) -> Unit) {
-    var addBudget by remember { mutableStateOf(false) }
-    var addRecurring by remember { mutableStateOf(false) }
-    var budgetToEdit by remember { mutableStateOf<Budget?>(null) }
-    var budgetToDelete by remember { mutableStateOf<Budget?>(null) }
-    var actionsForBudget by remember { mutableStateOf<Long?>(null) }
-    var recurringToEdit by remember { mutableStateOf<Recurring?>(null) }
-    var recurringToDelete by remember { mutableStateOf<Recurring?>(null) }
-    var actionsForRecurring by remember { mutableStateOf<Long?>(null) }
-    LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(22.dp, 22.dp, 22.dp, 100.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-        item { Text("Your plan", fontSize = 28.sp, color = ink, fontWeight = FontWeight.Bold); Text("A little structure, a lot more ease.", color = muted, fontSize = 14.sp) }
-        item { Column(Modifier.fillMaxWidth().background(mint, RoundedCornerShape(18.dp)).padding(18.dp)) { Text("MONTHLY TOTAL", color = forest, fontSize = 12.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.height(5.dp)); Text("${money(budgets.sumOf { it.spent })} spent of ${money(budgets.sumOf { it.limit })}", color = ink, fontSize = 20.sp, fontWeight = FontWeight.Bold); Text("${money((budgets.sumOf { it.limit } - budgets.sumOf { it.spent }).coerceAtLeast(0.0))} remaining", color = forest, fontSize = 13.sp) } }
-        item { Text("Categories", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = ink) }
-        items(budgets, key = { "budget-${it.id}" }) { budget ->
-            BudgetActionRow(budget, actionsForBudget == budget.id,
-                onSwipeStateChange = { open -> actionsForBudget = if (open) budget.id else null },
-                onEdit = { actionsForBudget = null; budgetToEdit = budget },
-                onDelete = { actionsForBudget = null; budgetToDelete = budget })
-        }
-        item { OutlinedButton(onClick = { addBudget = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("Add a category budget") } }
-        item { Text("Recurring items", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = ink) }
-        items(recurring, key = { "recurring-${it.id}" }) { item ->
-            RecurringActionRow(item, actionsForRecurring == item.id,
-                onSwipeStateChange = { open -> actionsForRecurring = if (open) item.id else null },
-                onEdit = { actionsForRecurring = null; recurringToEdit = item },
-                onDelete = { actionsForRecurring = null; recurringToDelete = item })
-        }
-        item { OutlinedButton(onClick = { addRecurring = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("Add recurring item") } }
-    }
-    if (addBudget) SimpleEntryDialog(title = "New category budget", categories = categories.map { it.first }, amountLabel = "Monthly limit", onDismiss = { addBudget = false }) { category, _, amount -> onAddBudget(category, amount); addBudget = false }
-    budgetToEdit?.let { budget ->
-        val availableCategories = categories.map { it.first }.filter { name -> name == budget.category || budgets.none { it.category == name } }
-        EditBudgetDialog(budget, availableCategories, onDismiss = { budgetToEdit = null }) { category, limit -> onEditBudget(budget.id, category, limit); budgetToEdit = null }
-    }
-    budgetToDelete?.let { budget -> AlertDialog(onDismissRequest = { budgetToDelete = null }, title = { Text("Delete budget?") }, text = { Text("The ${budget.category} budget will be permanently removed.") }, confirmButton = { TextButton(onClick = { onDeleteBudget(budget.id); budgetToDelete = null }) { Text("Delete", color = MaterialTheme.colorScheme.error) } }, dismissButton = { TextButton(onClick = { budgetToDelete = null }) { Text("Cancel") } }) }
-    if (addRecurring) RecurringEntryDialog(categories = categories.map { it.first }, onDismiss = { addRecurring = false }) { title, category, amount, dueDay -> onAddRecurring(title, category, amount, dueDay); addRecurring = false }
-    recurringToEdit?.let { item -> EditRecurringDialog(item, categories.map { it.first }, onDismiss = { recurringToEdit = null }) { title, category, amount, dueDay -> onEditRecurring(item.id, title, category, amount, dueDay); recurringToEdit = null } }
-    recurringToDelete?.let { item -> AlertDialog(onDismissRequest = { recurringToDelete = null }, title = { Text("Delete recurring item?") }, text = { Text("\"${item.title}\" will be removed from your recurring items.") }, confirmButton = { TextButton(onClick = { onDeleteRecurring(item.id); recurringToDelete = null }) { Text("Delete", color = MaterialTheme.colorScheme.error) } }, dismissButton = { TextButton(onClick = { recurringToDelete = null }) { Text("Cancel") } }) }
-}
-
-@Composable
-private fun RecurringRow(name: String, detail: String, amount: Double, icon: String) {
-    Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(16.dp)).padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(40.dp).background(mint, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Text(icon) }
-        Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(name, color = ink, fontWeight = FontWeight.SemiBold); Text(detail, color = muted, fontSize = 12.sp) }
-        Text(money(amount), color = ink, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun RecurringActionRow(
-    item: Recurring,
-    showActions: Boolean,
-    onSwipeStateChange: (Boolean) -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val actionsWidth = 100.dp
-    val actionsWidthPx = with(density) { actionsWidth.toPx() }
-    val openThresholdPx = with(density) { 50.dp.toPx() }
-    var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
-    val revealedWidth = with(density) { (-offsetX).toDp() }
-    LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
-
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
+private fun Masthead(showAdd: Boolean, onAdd: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
-            Modifier.align(Alignment.CenterEnd).width(actionsWidth),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
+            Modifier.widthIn(max = 840.dp).fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp)
         ) {
-            Box(Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp)).clickable(onClick = onEdit).padding(10.dp)) {
-                Icon(Icons.Default.Edit, contentDescription = "Edit ${item.title}", tint = forest)
-            }
-            Spacer(Modifier.width(6.dp))
-            Box(Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp)).clickable(onClick = onDelete).padding(10.dp)) {
-                Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${item.title}", tint = Color(0xFF8C1D18))
-            }
-        }
-        Box(
-            Modifier.fillMaxWidth()
-                .padding(end = revealedWidth)
-                .pointerInput(item.id, actionsWidthPx) {
-                    detectHorizontalDragGestures(
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            offsetX = (offsetX + dragAmount).coerceIn(-actionsWidthPx, 0f)
-                        },
-                        onDragEnd = {
-                            val open = offsetX <= -openThresholdPx
-                            offsetX = if (open) -actionsWidthPx else 0f
-                            onSwipeStateChange(open)
-                        }
-                    )
+            BrandMark(Modifier.size(35.dp))
+            Text("Crisbud", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+            if (showAdd) {
+                FilledTonalButton(
+                    onClick = onAdd,
+                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = colors.primaryContainer, contentColor = colors.onPrimaryContainer),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Add entry")
                 }
-        ) {
-            RecurringRow(item.title, "${item.category} · due day ${item.dueDay}", item.amount, "↻")
+            }
         }
+        HorizontalDivider(color = colors.outlineVariant)
     }
 }
 
-@Composable
-private fun EditRecurringDialog(
-    item: Recurring,
-    categories: List<String>,
-    onDismiss: () -> Unit,
-    onSave: (String, String, Double, Long) -> Unit
-) {
-    var title by remember(item.id) { mutableStateOf(item.title) }
-    var category by remember(item.id) { mutableStateOf(item.category) }
-    var amount by remember(item.id) { mutableStateOf(item.amount.toString()) }
-    var dueDay by remember(item.id) { mutableStateOf(item.dueDay.toString()) }
-    var expanded by remember { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Edit recurring item") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            OutlinedTextField(title, { title = it }, label = { Text("Name") }, singleLine = true)
-            Box {
-                OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category, color = ink) }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    categories.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { category = name; expanded = false }) }
-                }
-            }
-            OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("₱") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
-            OutlinedTextField(dueDay, { dueDay = it.filter(Char::isDigit).take(2) }, label = { Text("Day of month (1–31)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-        }
-    }, confirmButton = {
-        Button(onClick = {
-            val value = amount.toDoubleOrNull()
-            val day = dueDay.toLongOrNull()
-            if (title.isNotBlank() && value != null && value > 0 && day != null && day in 1..31) onSave(title.trim(), category, value, day)
-        }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") }
-    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+internal fun money(value: Double): String {
+    if (!value.isFinite()) return "—"
+    val cents = (abs(value) * 100).roundToLong()
+    val whole = (cents / 100).toString().reversed().chunked(3).joinToString(",").reversed()
+    val sign = if (value < 0 && cents != 0L) "−" else ""
+    return "${sign}₱${whole}.${(cents % 100).toString().padStart(2, '0')}"
 }
 
-@Composable
-private fun SettingsScreen(
-    padding: PaddingValues,
-    categories: List<Pair<String, String>>,
-    wallets: List<StoredWallet>,
-    onAddCategory: (String) -> Unit,
-    onRenameCategory: (String, String) -> Boolean,
-    onDeleteCategory: (String) -> Boolean,
-    onAddWallet: (String) -> Unit,
-    onRenameWallet: (String, String) -> Boolean,
-    onDeleteWallet: (String) -> Boolean,
-    onSetWalletBalance: (String, Double) -> Unit,
-    sql: () -> String,
-    onSqlImported: (String) -> Unit,
-    onFileMessage: (String) -> Unit
-) {
-    var manageCategories by remember { mutableStateOf(false) }
-    var manageWallets by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().padding(padding).padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Your space", fontSize = 28.sp, color = ink, fontWeight = FontWeight.Bold)
-        Text("A budget that feels like yours.", color = muted)
-        Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).clickable { manageWallets = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Savings, null, tint = forest); Column(Modifier.weight(1f).padding(start = 13.dp)) { Text("Manage wallets", color = ink, fontWeight = FontWeight.SemiBold); Text("${wallets.size} wallets", color = muted, fontSize = 12.sp) }; Text("›", color = muted, fontSize = 24.sp)
-        }
-        Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).clickable { manageCategories = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Category, null, tint = forest); Column(Modifier.weight(1f).padding(start = 13.dp)) { Text("Manage categories", color = ink, fontWeight = FontWeight.SemiBold); Text("${categories.size} categories", color = muted, fontSize = 12.sp) }; Text("›", color = muted, fontSize = 24.sp)
-        }
-        SettingsCard(Icons.Default.Savings, "Monthly plan", "Adjust your budget for this month")
-        SettingsCard(Icons.Default.ReceiptLong, "Recurring items", "Keep regular bills in view")
-        Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-            SqlFileActions(sql, onSqlImported, onFileMessage)
-        }
-        Spacer(Modifier.weight(1f)); Text("Your money stays yours. Private by design.", color = muted, fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
-    }
-    if (manageCategories) CategoryManagementDialog(
-        categories = categories,
-        onDismiss = { manageCategories = false },
-        onAddCategory = onAddCategory,
-        onRenameCategory = onRenameCategory,
-        onDeleteCategory = onDeleteCategory
-    )
-    if (manageWallets) WalletManagementDialog(
-        wallets = wallets,
-        onDismiss = { manageWallets = false },
-        onAddWallet = onAddWallet,
-        onRenameWallet = onRenameWallet,
-        onDeleteWallet = onDeleteWallet,
-        onSetWalletBalance = onSetWalletBalance
-    )
-}
-
-@Composable
-private fun CategoryManagementDialog(
-    categories: List<Pair<String, String>>,
-    onDismiss: () -> Unit,
-    onAddCategory: (String) -> Unit,
-    onRenameCategory: (String, String) -> Boolean,
-    onDeleteCategory: (String) -> Boolean
-) {
-    var addCategory by remember { mutableStateOf(false) }
-    var categoryToEdit by remember { mutableStateOf<String?>(null) }
-    var categoryToDelete by remember { mutableStateOf<String?>(null) }
-    var actionsForCategory by remember { mutableStateOf<String?>(null) }
-    var message by remember { mutableStateOf<String?>(null) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Manage categories") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                LazyColumn(Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item { Text("Use categories to organize your transactions.", color = muted) }
-                    items(categories) { (name, icon) ->
-                    SwipeCategoryRow(
-                        name = name,
-                        icon = icon,
-                        showActions = actionsForCategory == name,
-                        onSwipeStateChange = { open -> actionsForCategory = if (open) name else null },
-                        onEdit = { actionsForCategory = null; categoryToEdit = name },
-                        onDelete = { actionsForCategory = null; categoryToDelete = name }
-                    )
-                    }
-                }
-                OutlinedButton(onClick = { addCategory = true }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Add category")
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
-    )
-    if (addCategory) CategoryEntryDialog(
-        onDismiss = { addCategory = false },
-        onSave = { name -> onAddCategory(name); addCategory = false }
-    )
-    categoryToEdit?.let { name ->
-        EditCategoryDialog(
-            name = name,
-            onDismiss = { categoryToEdit = null },
-            onSave = { newName ->
-                if (onRenameCategory(name, newName)) categoryToEdit = null
-                else message = "That category name is already in use, or its budgets would overlap."
-            }
-        )
-    }
-    categoryToDelete?.let { name ->
-        AlertDialog(
-            onDismissRequest = { categoryToDelete = null },
-            title = { Text("Delete $name?") },
-            text = { Text("This removes the category from your list. Categories used by transactions, budgets, or recurring items cannot be deleted.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    val deleted = onDeleteCategory(name)
-                    categoryToDelete = null
-                    if (!deleted) message = "This category is still used by a transaction, budget, or recurring item."
-                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = { TextButton(onClick = { categoryToDelete = null }) { Text("Cancel") } }
-        )
-    }
-    message?.let { text ->
-        AlertDialog(
-            onDismissRequest = { message = null },
-            text = { Text(text) },
-            confirmButton = { TextButton(onClick = { message = null }) { Text("OK") }
-            }
-        )
-    }
-}
-
-@Composable
-private fun WalletManagementDialog(
-    wallets: List<StoredWallet>,
-    onDismiss: () -> Unit,
-    onAddWallet: (String) -> Unit,
-    onRenameWallet: (String, String) -> Boolean,
-    onDeleteWallet: (String) -> Boolean,
-    onSetWalletBalance: (String, Double) -> Unit
-) {
-    var walletToEdit by remember { mutableStateOf<String?>(null) }
-    var walletToDelete by remember { mutableStateOf<String?>(null) }
-    var actionsForWallet by remember { mutableStateOf<String?>(null) }
-    var addingWallet by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Manage wallets") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                LazyColumn(Modifier.heightIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    item { Text("Choose a wallet for each activity entry.", color = muted) }
-                    items(wallets, key = { it.name }) { wallet ->
-                        SwipeWalletRow(
-                            wallet = wallet,
-                            showActions = actionsForWallet == wallet.name,
-                            onSwipeStateChange = { open -> actionsForWallet = if (open) wallet.name else null },
-                            onEdit = { actionsForWallet = null; walletToEdit = wallet.name },
-                            onDelete = { actionsForWallet = null; walletToDelete = wallet.name }
-                        )
-                    }
-                }
-                message?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
-                OutlinedButton(onClick = { addingWallet = true }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Add, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Add wallet")
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
-    )
-    if (addingWallet) WalletNameDialog("Add wallet", initialBalance = 0.0, onDismiss = { addingWallet = false }) { name, balance ->
-        if (wallets.any { it.name.equals(name, ignoreCase = true) }) message = "That wallet name is already in use."
-        else { onAddWallet(name); onSetWalletBalance(name, balance); addingWallet = false; message = null }
-    }
-    walletToEdit?.let { oldName ->
-        val oldWallet = wallets.firstOrNull { it.name == oldName }
-        WalletNameDialog("Edit wallet", oldName, oldWallet?.balance ?: 0.0, onDismiss = { walletToEdit = null }) { newName, balance ->
-        if (onRenameWallet(oldName, newName)) {
-            onSetWalletBalance(newName, balance)
-            walletToEdit = null
-            message = null
-        }
-        else message = "That wallet name is already in use."
-    } }
-    walletToDelete?.let { name ->
-        AlertDialog(
-            onDismissRequest = { walletToDelete = null },
-            title = { Text("Delete $name?") },
-            text = { Text("Wallets used by activities cannot be deleted.") },
-            confirmButton = { TextButton(onClick = {
-                val deleted = onDeleteWallet(name)
-                walletToDelete = null
-                message = if (deleted) null else "This wallet is still used by an activity."
-            }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { walletToDelete = null }) { Text("Cancel") } }
-        )
-    }
-}
-
-@Composable
-private fun WalletNameDialog(
-    title: String,
-    initialName: String = "",
-    initialBalance: Double = 0.0,
-    onDismiss: () -> Unit,
-    onSave: (String, Double) -> Unit
-) {
-    var name by remember(initialName) { mutableStateOf(initialName) }
-    var balance by remember(initialBalance) { mutableStateOf(initialBalance.toString()) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(name, { name = it }, label = { Text("Wallet name") }, singleLine = true)
-                OutlinedTextField(balance, { balance = it }, label = { Text("Current balance") }, prefix = { Text("₱") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
-            }
-        },
-        confirmButton = { Button(onClick = {
-            val value = balance.toDoubleOrNull()
-            if (name.isNotBlank() && value != null && value >= 0) onSave(name.trim(), value)
-        }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
-
-@Composable
-private fun SwipeWalletRow(
-    wallet: StoredWallet,
-    showActions: Boolean,
-    onSwipeStateChange: (Boolean) -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val actionsWidth = 100.dp
-    val actionsWidthPx = with(density) { actionsWidth.toPx() }
-    val openThresholdPx = with(density) { 50.dp.toPx() }
-    var offsetX by remember(wallet.name) { mutableFloatStateOf(0f) }
-    val revealedWidth = with(density) { (-offsetX).toDp() }
-    LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
-
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
-        Row(
-            Modifier.align(Alignment.CenterEnd).width(actionsWidth),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp)).clickable(onClick = onEdit).padding(10.dp)) {
-                Icon(Icons.Default.Edit, contentDescription = "Edit ${wallet.name} wallet", tint = forest)
-            }
-            Spacer(Modifier.width(6.dp))
-            Box(Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp)).clickable(onClick = onDelete).padding(10.dp)) {
-                Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${wallet.name} wallet", tint = Color(0xFF8C1D18))
-            }
-        }
-        Row(
-            Modifier.fillMaxWidth()
-                .padding(end = revealedWidth)
-                .background(Color.White, RoundedCornerShape(16.dp))
-                .pointerInput(wallet.name, actionsWidthPx) {
-                    detectHorizontalDragGestures(
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            offsetX = (offsetX + dragAmount).coerceIn(-actionsWidthPx, 0f)
-                        },
-                        onDragEnd = {
-                            val open = offsetX <= -openThresholdPx
-                            offsetX = if (open) -actionsWidthPx else 0f
-                            onSwipeStateChange(open)
-                        }
-                    )
-                }
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.size(38.dp).background(mint, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                Text(wallet.name.take(1).uppercase(), color = forest, fontWeight = FontWeight.Bold)
-            }
-            Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text(wallet.name, color = ink, fontWeight = FontWeight.Medium)
-                Text(money(wallet.balance), color = muted, fontSize = 12.sp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun SwipeCategoryRow(
-    name: String,
-    icon: String,
-    showActions: Boolean,
-    onSwipeStateChange: (Boolean) -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val actionsWidth = 100.dp
-    val actionsWidthPx = with(density) { actionsWidth.toPx() }
-    val openThresholdPx = with(density) { 50.dp.toPx() }
-    var offsetX by remember(name) { mutableFloatStateOf(0f) }
-    val revealedWidth = with(density) { (-offsetX).toDp() }
-    LaunchedEffect(showActions) { offsetX = if (showActions) -actionsWidthPx else 0f }
-
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
-        Row(
-            Modifier.align(Alignment.CenterEnd).width(actionsWidth),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.background(Color(0xFFDCEBE0), RoundedCornerShape(8.dp)).clickable(onClick = onEdit).padding(10.dp)) {
-                Icon(Icons.Default.Edit, contentDescription = "Edit $name category", tint = forest)
-            }
-            Spacer(Modifier.width(6.dp))
-            Box(Modifier.background(Color(0xFFF8DEDC), RoundedCornerShape(8.dp)).clickable(onClick = onDelete).padding(10.dp)) {
-                Icon(Icons.Default.DeleteOutline, contentDescription = "Delete $name category", tint = Color(0xFF8C1D18))
-            }
-        }
-        Row(
-            Modifier.fillMaxWidth()
-                .padding(end = revealedWidth)
-                .background(Color.White, RoundedCornerShape(16.dp))
-                .pointerInput(name, actionsWidthPx) {
-                    detectHorizontalDragGestures(
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            offsetX = (offsetX + dragAmount).coerceIn(-actionsWidthPx, 0f)
-                        },
-                        onDragEnd = {
-                            val open = offsetX <= -openThresholdPx
-                            offsetX = if (open) -actionsWidthPx else 0f
-                            onSwipeStateChange(open)
-                        }
-                    )
-                }
-                .padding(horizontal = 12.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(icon, color = forest)
-            Text(name, Modifier.weight(1f).padding(start = 12.dp), color = ink, fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-@Composable
-private fun EditCategoryDialog(name: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
-    var editedName by remember(name) { mutableStateOf(name) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Edit category") },
-        text = { OutlinedTextField(editedName, { editedName = it }, label = { Text("Category name") }, singleLine = true) },
-        confirmButton = { Button(onClick = { if (editedName.isNotBlank()) onSave(editedName.trim()) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
-
-@Composable
-private fun SettingsCard(icon: ImageVector, title: String, description: String) {
-    Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = forest); Column(Modifier.weight(1f).padding(start = 13.dp)) { Text(title, color = ink, fontWeight = FontWeight.SemiBold); Text(description, color = muted, fontSize = 12.sp) }; Text("›", color = muted, fontSize = 24.sp)
-    }
-}
-
-@Composable
-private fun EditTransactionDialog(
-    item: Transaction,
-    categoryNames: List<String>,
-    walletNames: List<String>,
-    onDismiss: () -> Unit,
-    onSave: (String, String, Double, Boolean, String, String) -> Unit
-) {
-    var title by remember(item.id) { mutableStateOf(item.title) }
-    var amount by remember(item.id) { mutableStateOf(item.amount.toString()) }
-    var category by remember(item.id) { mutableStateOf(item.category) }
-    var income by remember(item.id) { mutableStateOf(item.income) }
-    var date by remember(item.id) { mutableStateOf(item.date) }
-    var wallet by remember(item.id) { mutableStateOf(item.wallet) }
-    var expanded by remember { mutableStateOf(false) }
-    var walletExpanded by remember { mutableStateOf(false) }
-    val categories = (categoryNames + category).distinct()
-    val wallets = (walletNames + wallet).distinct()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Edit activity", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(Modifier.fillMaxWidth().background(mint, RoundedCornerShape(14.dp)).padding(4.dp)) {
-                    listOf(false to "Expense", true to "Income").forEach { (isIncome, label) ->
-                        Box(
-                            Modifier.weight(1f)
-                                .background(if (income == isIncome) Color.White else Color.Transparent, RoundedCornerShape(11.dp))
-                                .clickable { income = isIncome }
-                                .padding(11.dp),
-                            contentAlignment = Alignment.Center
-                        ) { Text(label, color = if (income == isIncome) forest else muted, fontWeight = FontWeight.SemiBold) }
-                    }
-                }
-                OutlinedTextField(title, { title = it }, label = { Text("What was it for?") }, singleLine = true)
-                OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("₱") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
-                OutlinedTextField(date, { date = it }, label = { Text("Date (YYYY-MM-DD)") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
-                Box {
-                    OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text("$category     ▾", color = ink) }
-                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                        categories.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { category = it; expanded = false }) }
-                    }
-                }
-                Box {
-                    OutlinedButton(onClick = { walletExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("$wallet     ▾", color = ink) }
-                    DropdownMenu(expanded = walletExpanded, onDismissRequest = { walletExpanded = false }) {
-                        wallets.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { wallet = name; walletExpanded = false }) }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val parsed = amount.toDoubleOrNull()
-                    if (title.isNotBlank() && parsed != null && parsed > 0 && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) onSave(title.trim(), category, parsed, income, date, wallet)
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = forest)
-            ) { Text("Save") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
-
-@Composable
-@OptIn(ExperimentalMaterial3Api::class)
-private fun AddTransactionDialog(categoryNames: List<String>, walletNames: List<String>, onDismiss: () -> Unit, onSave: (Transaction) -> Unit) {
-    var title by remember { mutableStateOf("") }
-    var amount by remember { mutableStateOf("") }
-    var date by remember { mutableStateOf(currentIsoDate()) }
-    var category by remember { mutableStateOf("Food & Drink") }
-    var wallet by remember(walletNames) { mutableStateOf(walletNames.firstOrNull().orEmpty()) }
-    var income by remember { mutableStateOf(false) }
-    var expanded by remember { mutableStateOf(false) }
-    var walletExpanded by remember { mutableStateOf(false) }
-    var showDatePicker by remember { mutableStateOf(false) }
-    val categories = categoryNames.ifEmpty { listOf("Food & Drink", "Transport", "Home", "Other") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Add transaction", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(Modifier.fillMaxWidth().background(mint, RoundedCornerShape(14.dp)).padding(4.dp)) {
-                    listOf(false to "Expense", true to "Income").forEach { (isIncome, label) ->
-                        Box(Modifier.weight(1f).background(if (income == isIncome) Color.White else Color.Transparent, RoundedCornerShape(11.dp)).clickable { income = isIncome }.padding(11.dp), contentAlignment = Alignment.Center) { Text(label, color = if (income == isIncome) forest else muted, fontWeight = FontWeight.SemiBold) }
-                    }
-                }
-                OutlinedTextField(title, { title = it }, label = { Text("What was it for?") }, singleLine = true)
-                OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("₱") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
-                OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Date   ·   $date", color = ink)
-                }
-                Box {
-                    OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text("$category     ▾", color = ink) }
-                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) { categories.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { category = it; expanded = false }) } }
-                }
-                Box {
-                    OutlinedButton(onClick = { walletExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(if (wallet.isBlank()) "Choose wallet     ▾" else "$wallet     ▾", color = ink) }
-                    DropdownMenu(expanded = walletExpanded, onDismissRequest = { walletExpanded = false }) {
-                        walletNames.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { wallet = name; walletExpanded = false }) }
-                    }
-                }
-            }
-        },
-        confirmButton = { Button(onClick = { val parsed = amount.toDoubleOrNull(); if (title.isNotBlank() && parsed != null && parsed > 0 && wallet.isNotBlank() && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) onSave(Transaction(0, title.trim(), category, parsed, income, date, wallet, date)) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
-    if (showDatePicker) {
-        val initialDateMillis = remember(date) { epochMillisFromIsoDate(date) }
-        val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialDateMillis)
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    pickerState.selectedDateMillis?.let { date = isoDateFromEpochMillis(it) }
-                    showDatePicker = false
-                }) { Text("OK") }
-            },
-            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }
-        ) {
-            DatePicker(state = pickerState)
-        }
-    }
-}
-
-@Composable
-private fun SimpleEntryDialog(title: String, categories: List<String>, amountLabel: String, onDismiss: () -> Unit, onSave: (String, String, Double) -> Unit) {
-    var category by remember { mutableStateOf(categories.firstOrNull().orEmpty()) }
-    var amount by remember { mutableStateOf("") }
-    var expanded by remember { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box {
-                OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category.ifBlank { "Choose category" }, color = ink) }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) { categories.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { category = it; expanded = false }) } }
-            }
-            OutlinedTextField(amount, { amount = it }, label = { Text(amountLabel) }, prefix = { Text("₱") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
-        }
-    }, confirmButton = { Button(onClick = { amount.toDoubleOrNull()?.takeIf { it > 0 }?.let { onSave(category, "", it) } }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
-}
-
-@Composable
-private fun RecurringEntryDialog(categories: List<String>, onDismiss: () -> Unit, onSave: (String, String, Double, Long) -> Unit) {
-    var title by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf(categories.firstOrNull().orEmpty()) }
-    var amount by remember { mutableStateOf("") }
-    var dueDay by remember { mutableStateOf("1") }
-    var expanded by remember { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Add recurring item") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            OutlinedTextField(title, { title = it }, label = { Text("Name") }, singleLine = true)
-            Box {
-                OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category.ifBlank { "Choose category" }, color = ink) }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) { categories.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { category = it; expanded = false }) } }
-            }
-            OutlinedTextField(amount, { amount = it }, label = { Text("Amount") }, prefix = { Text("₱") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
-            OutlinedTextField(dueDay, { dueDay = it.filter(Char::isDigit).take(2) }, label = { Text("Day of month (1–31)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-        }
-    }, confirmButton = { Button(onClick = { val value = amount.toDoubleOrNull(); val day = dueDay.toLongOrNull(); if (title.isNotBlank() && value != null && value > 0 && day != null && day in 1..31) onSave(title.trim(), category, value, day) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
-}
-
-@Composable
-private fun CategoryEntryDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("New category") }, text = { OutlinedTextField(name, { name = it }, label = { Text("Category name") }, singleLine = true) }, confirmButton = { Button(onClick = { if (name.isNotBlank()) onSave(name.trim()) }, colors = ButtonDefaults.buttonColors(containerColor = forest)) { Text("Add") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
-}
-
-private fun money(value: Double): String = "₱" + ((value * 100).toLong() / 100.0).let { amount ->
-    val whole = amount.toLong()
-    val cents = ((amount - whole) * 100).toInt()
-    whole.toString() + "." + if (cents < 10) "0$cents" else cents.toString()
-}
-
-private fun monthLabel(month: String): String {
-    val monthNames = listOf("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
-    val year = month.substringBefore('-')
-    val monthNumber = month.substringAfter('-', "").toIntOrNull()
-    val monthName = monthNumber?.let { monthNames.getOrNull(it - 1) }
-    return if (monthName != null) "$monthName $year" else month
-}
-
-@Composable
-private fun CrisbudTheme(content: @Composable () -> Unit) {
-    val colors = lightColorScheme(
-        primary = forest,
-        onPrimary = Color.White,
-        primaryContainer = mint,
-        onPrimaryContainer = Color(0xFF153B2B),
-        secondary = Color(0xFF52675A),
-        onSecondary = Color.White,
-        secondaryContainer = Color(0xFFE0E9E1),
-        onSecondaryContainer = Color(0xFF24372B),
-        tertiary = orange,
-        onTertiary = Color.White,
-        tertiaryContainer = Color(0xFFFFDCC0),
-        onTertiaryContainer = Color(0xFF321900),
-        background = Color(0xFFF6F8F4),
-        onBackground = ink,
-        surface = Color(0xFFFCFDF9),
-        onSurface = ink,
-        surfaceVariant = Color(0xFFE8EDE7),
-        onSurfaceVariant = muted,
-        outline = Color(0xFF87958B),
-        outlineVariant = Color(0xFFD7DED7),
-        error = Color(0xFFBA1A1A),
-        onError = Color.White,
-        errorContainer = Color(0xFFFFDAD6),
-        onErrorContainer = Color(0xFF410002)
-    )
-    val typography = Typography(
-        headlineLarge = androidx.compose.ui.text.TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Bold, color = ink),
-        headlineMedium = androidx.compose.ui.text.TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold, color = ink),
-        titleLarge = androidx.compose.ui.text.TextStyle(fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = ink),
-        titleMedium = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = ink),
-        bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, color = ink),
-        bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = ink),
-        labelLarge = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-    )
-    val shapes = Shapes(
-        extraSmall = RoundedCornerShape(8.dp),
-        small = RoundedCornerShape(12.dp),
-        medium = RoundedCornerShape(18.dp),
-        large = RoundedCornerShape(24.dp),
-        extraLarge = RoundedCornerShape(32.dp)
-    )
-    MaterialTheme(colorScheme = colors, typography = typography, shapes = shapes, content = content)
+internal fun monthLabel(month: String): String {
+    val names = listOf("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+    val number = month.substringAfter('-', "").toIntOrNull() ?: return month
+    val name = names.getOrNull(number - 1) ?: return month
+    return "$name ${month.substringBefore('-')}"
 }
 
 
