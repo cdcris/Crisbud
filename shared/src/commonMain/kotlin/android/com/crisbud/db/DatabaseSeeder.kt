@@ -30,9 +30,9 @@ internal object DatabaseSeeder {
         if (q.selectTransactions(null).executeAsList().isEmpty()) {
             q.ensureWallet("Cash")
             val cash = walletId("Cash")
-            q.insertTransaction(null, "Grocery run", ensureCategory("Food & Drink", RecordKind.EXPENSE), 42.80, RecordKind.EXPENSE, "$month-12", cash)
-            q.insertTransaction(null, "Monthly salary", ensureCategory("Income", RecordKind.INCOME), 3200.0, RecordKind.INCOME, "$month-01", cash)
-            q.insertTransaction(null, "Train pass", ensureCategory("Transport", RecordKind.EXPENSE), 32.0, RecordKind.EXPENSE, "$month-13", cash)
+            q.insertTransaction(null, "Grocery run", ensureCategory("Food & Drink", RecordKind.EXPENSE), 42.80, RecordKind.EXPENSE, "$month-12", cash, 1)
+            q.insertTransaction(null, "Monthly salary", ensureCategory("Income", RecordKind.INCOME), 3200.0, RecordKind.INCOME, "$month-01", cash, 1)
+            q.insertTransaction(null, "Train pass", ensureCategory("Transport", RecordKind.EXPENSE), 32.0, RecordKind.EXPENSE, "$month-13", cash, 1)
         }
     }
 }

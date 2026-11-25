@@ -1,7 +1,10 @@
 package android.com.crisbud
 
+import android.com.crisbud.db.CSV_SAMPLE_NAME
 import android.com.crisbud.db.SqlFileActions
 import android.com.crisbud.db.StoredWallet
+import android.com.crisbud.db.rememberCsvFileActions
+import android.com.crisbud.resources.Res
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -21,6 +24,7 @@ import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.FolderCopy
 import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.ImportExport
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -33,6 +37,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import org.jetbrains.compose.resources.ExperimentalResourceApi
 
 private enum class ManagedList(val title: String, val itemName: String) {
     Wallets("Wallets", "wallet"),
@@ -42,6 +47,7 @@ private enum class ManagedList(val title: String, val itemName: String) {
 private data class SettingsRecord(val name: String, val balance: Double? = null)
 
 @Composable
+@OptIn(ExperimentalResourceApi::class)
 internal fun SettingsScreen(
     padding: PaddingValues,
     categories: List<Pair<String, String>>,
@@ -55,9 +61,17 @@ internal fun SettingsScreen(
     onSetWalletBalance: (String, Double) -> Unit,
     sql: () -> String,
     onSqlImported: (String) -> Unit,
+    csv: () -> String,
+    onCsvImported: (String) -> Unit,
     onFileMessage: (String) -> Unit
 ) {
     var managedList by rememberSaveable { mutableStateOf<ManagedList?>(null) }
+    val csvSample by produceState<String?>(null) {
+        value = Res.readBytes("files/$CSV_SAMPLE_NAME").decodeToString()
+    }
+    val csvFiles = rememberCsvFileActions(
+        csv, { checkNotNull(csvSample) { "The CSV sample is still loading." } }, onCsvImported, onFileMessage
+    )
     val colors = MaterialTheme.colorScheme
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
@@ -111,6 +125,24 @@ internal fun SettingsScreen(
                             color = colors.onSurfaceVariant
                         )
                         SqlFileActions(sql, onSqlImported, onFileMessage)
+                    }
+                }
+                Surface(color = colors.surfaceContainer, shape = MaterialTheme.shapes.extraLarge) {
+                    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.ImportExport, null, tint = colors.primary)
+                            Text("Expense CSV", style = MaterialTheme.typography.titleMedium)
+                        }
+                        Text(
+                            "Export expense transactions to a spreadsheet or use the sample to add expenses. " +
+                                "Imports create any missing categories and wallets.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.onSurfaceVariant
+                        )
+                        BackupActions(onExport = csvFiles.export, onImport = csvFiles.importExpenses)
+                        TextButton(onClick = csvFiles.downloadSample, enabled = csvSample != null) {
+                            Text("Download sample CSV")
+                        }
                     }
                 }
             }

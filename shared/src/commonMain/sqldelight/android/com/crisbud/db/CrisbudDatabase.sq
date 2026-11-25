@@ -20,7 +20,8 @@ CREATE TABLE Entries (
   amount REAL NOT NULL,
   kind INTEGER AS RecordKind NOT NULL CHECK (kind IN (0, 1)),
   date TEXT NOT NULL,
-  wallet_id INTEGER NOT NULL REFERENCES Wallet(id) ON DELETE RESTRICT
+  wallet_id INTEGER NOT NULL REFERENCES Wallet(id) ON DELETE RESTRICT,
+  quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0 AND (kind = 0 OR quantity = 1))
 );
 
 CREATE TABLE Budget (
@@ -46,17 +47,17 @@ CREATE INDEX entries_wallet ON Entries(wallet_id);
 CREATE INDEX recurring_category ON RecurringItem(category_id);
 
 selectTransactions:
-SELECT e.id, e.title, c.name AS category, e.amount, e.kind, e.date, w.name AS wallet
+SELECT e.id, e.title, c.name AS category, e.amount, e.kind, e.date, w.name AS wallet, e.quantity
 FROM Entries e JOIN Category c ON c.id = e.category_id JOIN Wallet w ON w.id = e.wallet_id
 WHERE :month IS NULL OR substr(e.date, 1, 7) = :month
 ORDER BY e.date DESC, e.id DESC;
 
 insertTransaction:
-INSERT INTO Entries(id, title, category_id, amount, kind, date, wallet_id)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO Entries(id, title, category_id, amount, kind, date, wallet_id, quantity)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 updateTransaction:
-UPDATE Entries SET title = ?, category_id = ?, amount = ?, kind = ?, date = ?, wallet_id = ? WHERE id = ?;
+UPDATE Entries SET title = ?, category_id = ?, amount = ?, kind = ?, date = ?, wallet_id = ?, quantity = ? WHERE id = ?;
 
 deleteTransaction:
 DELETE FROM Entries WHERE id = ?;
@@ -113,7 +114,7 @@ DELETE FROM Category WHERE id = ?;
 
 selectBudgetsForMonth:
 SELECT b.id, c.name AS category, b.month, b.limit_amount,
-  COALESCE((SELECT SUM(e.amount) FROM Entries e
+  COALESCE((SELECT SUM(e.amount * e.quantity) FROM Entries e
     WHERE e.category_id = b.category_id AND e.kind = 0
       AND substr(e.date, 1, 7) = b.month), 0.0) AS spent
 FROM Budget b JOIN Category c ON c.id = b.category_id

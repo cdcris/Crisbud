@@ -72,7 +72,7 @@ internal fun ActivityScreen(
     walletNames: List<String>,
     month: String,
     onDelete: (Long) -> Unit,
-    onEdit: (Long, String, String, Double, Boolean, String, String) -> Unit
+    onEdit: (Transaction) -> Unit
 ) {
     var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
     var deletingId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -106,12 +106,12 @@ internal fun ActivityScreen(
             Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ActivityTotal(
-                    "Income", entries.filter { it.income }.sumOf { it.amount },
+                    "Income", entries.filter { it.income }.sumOf { it.totalAmount },
                     Icons.Rounded.ArrowDownward, colors.primaryContainer, colors.onPrimaryContainer,
                     RoundedCornerShape(24.dp, 8.dp, 8.dp, 24.dp), Modifier.weight(1f)
                 )
                 ActivityTotal(
-                    "Expenses", entries.filter { !it.income }.sumOf { it.amount },
+                    "Expenses", entries.filter { !it.income }.sumOf { it.totalAmount },
                     Icons.Rounded.ArrowUpward, colors.tertiaryContainer, colors.onTertiaryContainer,
                     RoundedCornerShape(8.dp, 24.dp, 24.dp, 8.dp), Modifier.weight(1f)
                 )
@@ -160,7 +160,7 @@ internal fun ActivityScreen(
     }
     transactions.firstOrNull { it.id == editingId }?.let { entry ->
         TransactionForm(entry, categories, walletNames, onDismiss = { editingId = null }) { edited ->
-            onEdit(edited.id, edited.title, edited.category, edited.amount, edited.income, edited.date, edited.wallet)
+            onEdit(edited)
             editingId = null
         }
     }
@@ -230,9 +230,10 @@ internal fun TransactionRow(item: Transaction) {
 @Composable
 private fun LedgerRow(item: Transaction, shape: Shape, actions: (@Composable () -> Unit)? = null) {
     val colors = MaterialTheme.colorScheme
-    val amount = (if (item.income) "+" else "−") + money(item.amount)
+    val amount = (if (item.income) "+" else "−") + money(item.totalAmount)
     val amountColor = if (item.income) colors.primary else colors.onSurface
     val details = buildList {
+        if (!item.income && item.quantity > 1) add("Qty ${item.quantity}")
         add(item.category)
         add(item.wallet)
         if (actions == null) add(if (item.day == "Today") "Today" else activityDate(item.date))
@@ -293,7 +294,8 @@ private fun TransactionForm(
     val categories = categoryNames
     val wallets = (walletNames + listOfNotNull(entry?.wallet)).distinct()
     var description by rememberSaveable(entry?.id) { mutableStateOf(entry?.title.orEmpty()) }
-    var amount by rememberSaveable(entry?.id) { mutableStateOf(entry?.amount?.toString().orEmpty()) }
+    var amount by rememberSaveable(entry?.id) { mutableStateOf(entry?.unitAmount?.toString().orEmpty()) }
+    var quantityText by rememberSaveable(entry?.id) { mutableStateOf((entry?.quantity ?: 1).toString()) }
     var income by rememberSaveable(entry?.id) { mutableStateOf(entry?.income ?: false) }
     var date by rememberSaveable(entry?.id) { mutableStateOf(entry?.date ?: currentIsoDate()) }
     var category by rememberSaveable(entry?.id) {
@@ -302,16 +304,20 @@ private fun TransactionForm(
     var wallet by rememberSaveable(entry?.id) { mutableStateOf(entry?.wallet ?: wallets.firstOrNull().orEmpty()) }
     var showDatePicker by rememberSaveable { mutableStateOf(false) }
     val value = amount.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
+    val quantity = if (income) 1L else quantityText.trim().toLongOrNull()?.takeIf { it > 0 }
+    val total = if (value != null && quantity != null) value * quantity else null
+    val totalTooLarge = total?.isFinite() == false
     val millis = remember(date) { epochMillisFromIsoDate(date) }
 
     EntrySheet(
         title = if (entry == null) "New transaction" else "Edit transaction",
         onDismiss = onDismiss,
         actionLabel = if (entry == null) "Add transaction" else "Save changes",
-        saveEnabled = description.isNotBlank() && value != null && millis != null && category in categories && wallet in wallets,
+        saveEnabled = description.isNotBlank() && total != null && !totalTooLarge &&
+            millis != null && category in categories && wallet in wallets,
         onSave = {
-            if (value != null) {
-                onSave(Transaction(entry?.id ?: 0L, description.trim(), category, value, income, date, wallet, date))
+            if (value != null && quantity != null && !totalTooLarge) {
+                onSave(Transaction(entry?.id ?: 0L, description.trim(), category, value, income, date, wallet, date, quantity))
             }
         }
     ) {
@@ -327,14 +333,33 @@ private fun TransactionForm(
         OutlinedTextField(
             value = amount,
             onValueChange = { amount = it },
-            label = { Text("Amount") },
+            label = { Text(if (income) "Amount" else "Unit price") },
             prefix = { Text("₱", style = MaterialTheme.typography.headlineSmall) },
             textStyle = MaterialTheme.typography.headlineSmall,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
+            isError = totalTooLarge,
+            supportingText = if (totalTooLarge) { { Text("The transaction total is too large.") } } else null,
             singleLine = true,
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth()
         )
+        if (!income) {
+            OutlinedTextField(
+                value = quantityText,
+                onValueChange = { quantityText = it },
+                label = { Text("Quantity") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                isError = quantity == null,
+                supportingText = when {
+                    quantity == null -> { { Text("Enter a positive whole number.") } }
+                    quantity > 1 && total != null && !totalTooLarge -> { { Text("Total ${money(total)}") } }
+                    else -> null
+                },
+                singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         OutlinedTextField(
             value = description,
             onValueChange = { description = it },

@@ -23,7 +23,19 @@ private enum class Screen(val title: String, val icon: ImageVector) {
     Settings("Settings", Icons.Rounded.Tune)
 }
 
-internal data class Transaction(val id: Long, val title: String, val category: String, val amount: Double, val income: Boolean, val date: String, val wallet: String, val day: String)
+internal data class Transaction(
+    val id: Long,
+    val title: String,
+    val category: String,
+    val unitAmount: Double,
+    val income: Boolean,
+    val date: String,
+    val wallet: String,
+    val day: String,
+    val quantity: Long
+) {
+    val totalAmount: Double get() = unitAmount * quantity
+}
 internal data class Budget(val id: Long, val category: String, val spent: Double, val limit: Double) {
     val utilization: Double get() = if (limit > 0.0) spent / limit else 0.0
 }
@@ -48,7 +60,10 @@ fun CrisbudApp() {
     val wallets = walletBalances.map { it.name }
     val transactions = remember(revision, today) {
         repository.transactions().map {
-            Transaction(it.id, it.title, it.category, it.amount, it.income, it.date, it.wallet, if (it.date == today) "Today" else it.date)
+            Transaction(
+                it.id, it.title, it.category, it.amount, it.income, it.date, it.wallet,
+                if (it.date == today) "Today" else it.date, it.quantity
+            )
         }
     }
     val monthTransactions = remember(transactions, month) { transactions.filter { it.date.take(7) == month } }
@@ -68,8 +83,11 @@ fun CrisbudApp() {
                         Screen.Activity -> ActivityScreen(
                             padding, transactions, categories.map { it.first }, wallets, month,
                             onDelete = { repository.deleteTransaction(it); revision++ },
-                            onEdit = { id, title, category, amount, income, date, wallet ->
-                                repository.updateTransaction(id, title, category, amount, income, date, wallet)
+                            onEdit = { transaction ->
+                                repository.updateTransaction(
+                                    transaction.id, transaction.title, transaction.category, transaction.unitAmount,
+                                    transaction.income, transaction.date, transaction.wallet, transaction.quantity
+                                )
                                 revision++
                             }
                         )
@@ -93,6 +111,11 @@ fun CrisbudApp() {
                             onSetWalletBalance = { name, amount -> repository.updateWalletBalance(name, amount); revision++ },
                             sql = repository::exportSql,
                             onSqlImported = { sql -> repository.importSql(sql); revision++ },
+                            csv = repository::exportCsv,
+                            onCsvImported = { csv ->
+                                repository.importCsv(csv)
+                                revision++
+                            },
                             onFileMessage = { fileMessage = it }
                         )
                     }
@@ -100,7 +123,7 @@ fun CrisbudApp() {
             }
             if (showEntry) {
                 AddTransactionDialog(categories.map { it.first }, wallets, onDismiss = { showEntry = false }) {
-                    repository.addTransaction(it.title, it.category, it.amount, it.income, it.date, it.wallet)
+                    repository.addTransaction(it.title, it.category, it.unitAmount, it.income, it.date, it.wallet, it.quantity)
                     revision++
                     showEntry = false
                 }

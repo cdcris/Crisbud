@@ -2,12 +2,12 @@ package android.com.crisbud.db
 
 internal const val SQL_BACKUP_HEADER = "-- Crisbud SQL backup v1"
 
-internal enum class BackupTable(vararg val columns: String) {
-    CATEGORY("name", "icon", "is_income"),
-    WALLET("name", "balance"),
-    ENTRIES("id", "title", "category", "amount", "income", "date", "wallet"),
-    BUDGET("id", "category", "month", "limit_amount"),
-    RECURRINGITEM("id", "title", "category", "amount", "due_day", "cadence", "active")
+internal enum class BackupTable(val sqlName: String, vararg val columns: String) {
+    CATEGORY("Category", "name", "icon", "is_income"),
+    WALLET("Wallet", "name", "balance"),
+    ENTRIES("Entries", "id", "title", "category", "amount", "income", "date", "wallet", "quantity"),
+    BUDGET("Budget", "id", "category", "month", "limit_amount"),
+    RECURRINGITEM("RecurringItem", "id", "title", "category", "amount", "due_day", "cadence", "active")
 }
 
 internal sealed interface BackupStatement {

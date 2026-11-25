@@ -64,8 +64,8 @@ internal fun OverviewScreen(
         }
         item {
             BalanceCard(
-                income = transactions.filter { it.income }.sumOf { it.amount },
-                expenses = transactions.filterNot { it.income }.sumOf { it.amount }
+                income = transactions.filter { it.income }.sumOf { it.totalAmount },
+                expenses = transactions.filterNot { it.income }.sumOf { it.totalAmount }
             )
         }
         item {
