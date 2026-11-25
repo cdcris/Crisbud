@@ -29,29 +29,7 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
     private val q = database.crisbudDatabaseQueries
 
     fun seedIfNeeded(month: String) = database.transaction {
-        if (q.selectWallets().executeAsList().isEmpty()) {
-            listOf("GCash", "MariBank", "Cash").forEach(q::ensureWallet)
-        }
-        if (q.selectCategories().executeAsList().isEmpty()) {
-            listOf("Food & Drink" to "🍜", "Transport" to "🚆", "Home" to "⌂", "Shopping" to "🛍",
-                "Health" to "＋", "Income" to "↗", "Other" to "•")
-                .forEach { (name, icon) -> q.ensureCategory(name, icon, RecordKind.fromIncome(name == "Income")) }
-        }
-        if (q.selectBudgetsForMonth(month).executeAsList().isEmpty()) {
-            listOf("Food & Drink" to 500.0, "Transport" to 180.0, "Home" to 1200.0)
-                .forEach { (name, limit) -> q.insertBudget(ensureCategory(name), month, limit) }
-        }
-        if (q.selectRecurringItems().executeAsList().isEmpty()) {
-            q.insertRecurringItem("Rent", ensureCategory("Home"), 1200.0, 1, RecurringCadence.MONTHLY.databaseValue)
-            q.insertRecurringItem("Streaming", ensureCategory("Subscriptions"), 14.99, 18, RecurringCadence.MONTHLY.databaseValue)
-        }
-        if (q.selectTransactions(null).executeAsList().isEmpty()) {
-            q.ensureWallet("Cash")
-            val cash = walletId("Cash")
-            q.insertTransaction(null, "Grocery run", ensureCategory("Food & Drink"), 42.80, RecordKind.EXPENSE, "$month-12", cash)
-            q.insertTransaction(null, "Monthly salary", ensureCategory("Income", RecordKind.INCOME), 3200.0, RecordKind.INCOME, "$month-01", cash)
-            q.insertTransaction(null, "Train pass", ensureCategory("Transport"), 32.0, RecordKind.EXPENSE, "$month-13", cash)
-        }
+        DatabaseSeeder.seed(q, month, ::ensureCategory, ::walletId)
     }
 
     fun transactions(): List<StoredTransaction> = readTransactions(null)
