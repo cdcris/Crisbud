@@ -57,12 +57,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+
+private const val ALL_TIME = "All time"
 
 @Composable
 internal fun ActivityScreen(
@@ -76,11 +79,17 @@ internal fun ActivityScreen(
 ) {
     var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
     var deletingId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var selectedMonth by rememberSaveable(month) { mutableStateOf<String?>(null) }
+    var selectedPeriod by rememberSaveable(month) { mutableStateOf<String?>(null) }
+    var selectedCategory by rememberSaveable { mutableStateOf<String?>(null) }
     val months = (transactions.map { it.date.take(7) } + month).distinct().sortedDescending()
-    val activeMonth = selectedMonth?.takeIf { it in months }
+    val periods = listOf(ALL_TIME) + months
+    val activePeriod = selectedPeriod?.takeIf { it in periods }
         ?: transactions.firstOrNull()?.date?.take(7) ?: month
-    val entries = transactions.filter { it.date.startsWith(activeMonth) }
+    val activeCategory = selectedCategory?.takeIf { it in categories }
+    val entries = transactions.filter { entry ->
+        (activePeriod == ALL_TIME || entry.date.startsWith(activePeriod)) &&
+            (activeCategory == null || entry.category == activeCategory)
+    }
     val colors = MaterialTheme.colorScheme
 
     LazyColumn(
@@ -88,19 +97,35 @@ internal fun ActivityScreen(
         contentPadding = PaddingValues(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 32.dp)
     ) {
         item {
-            PageHeading("Activity")
-            Spacer(Modifier.height(18.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                MonthPicker(activeMonth, months) { selectedMonth = it }
+            PageHeading("Activity") {
                 val count = entries.size
                 Text(
                     if (count == 1) "1 entry" else "$count entries",
                     color = colors.onSurfaceVariant,
                     style = MaterialTheme.typography.labelLarge
+                )
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ActivityFilterPicker(
+                    selected = activePeriod,
+                    options = periods,
+                    label = ::monthLabel,
+                    description = "Period filter",
+                    modifier = Modifier.weight(1f),
+                    onSelect = { selectedPeriod = it }
+                )
+                ActivityFilterPicker(
+                    selected = activeCategory,
+                    options = listOf(null) + categories,
+                    label = { it ?: "All categories" },
+                    description = "Category filter",
+                    modifier = Modifier.weight(1f),
+                    onSelect = { selectedCategory = it }
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -130,7 +155,14 @@ internal fun ActivityScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Icon(Icons.AutoMirrored.Rounded.ReceiptLong, null, tint = colors.primary)
-                        Text("No transactions this month", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            when {
+                                activeCategory != null -> "No transactions match this category"
+                                activePeriod == ALL_TIME -> "No transactions"
+                                else -> "No transactions this month"
+                            },
+                            style = MaterialTheme.typography.titleMedium
+                        )
                     }
                 }
             }
@@ -173,25 +205,34 @@ internal fun ActivityScreen(
 }
 
 @Composable
-private fun MonthPicker(activeMonth: String, months: List<String>, onSelect: (String) -> Unit) {
+private fun <T> ActivityFilterPicker(
+    selected: T,
+    options: List<T>,
+    label: (T) -> String,
+    description: String,
+    modifier: Modifier,
+    onSelect: (T) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
-    Box {
-        FilledTonalButton(onClick = { expanded = true }) {
-            Icon(Icons.Rounded.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(monthLabel(activeMonth))
+    Box(modifier) {
+        FilledTonalButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = description },
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            Text(label(selected), modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.width(4.dp))
             Icon(Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(18.dp))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            months.forEach { month ->
+            options.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(monthLabel(month)) },
+                    text = { Text(label(option)) },
                     trailingIcon = {
-                        if (month == activeMonth) Icon(Icons.Rounded.Check, contentDescription = "Selected")
+                        if (option == selected) Icon(Icons.Rounded.Check, contentDescription = "Selected")
                     },
                     onClick = {
-                        onSelect(month)
+                        onSelect(option)
                         expanded = false
                     }
                 )

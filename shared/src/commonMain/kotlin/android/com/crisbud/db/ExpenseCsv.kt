@@ -11,8 +11,9 @@ internal fun StringBuilder.appendExpenseCsvHeader() {
 }
 
 internal fun StringBuilder.appendExpenseCsvRow(expense: StoredTransaction) {
+    val lineTotal = expense.amount * expense.quantity
     appendCsvRow(listOf(
-        expense.title, expense.category, expense.amount.toString(), expense.date,
+        expense.title, expense.category, lineTotal.toString(), expense.date,
         expense.wallet, expense.quantity.toString()
     ))
 }
@@ -30,7 +31,7 @@ internal data class ExpenseCsvRow(
     val number: Int,
     val title: String,
     val category: String,
-    val amount: Double,
+    val lineTotal: Double,
     val date: String,
     val wallet: String,
     val quantity: Long
@@ -54,7 +55,7 @@ internal fun readExpenseCsv(csv: String): List<ExpenseCsvRow> {
         fun required(column: String): String = values.getValue(column).also {
             require(it.isNotBlank()) { "CSV row $number needs a value for $column." }
         }
-        val amount = requireNotNull(required("amount").trim().toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }) {
+        val lineTotal = requireNotNull(required("amount").trim().toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }) {
             "CSV row $number must have a positive, finite amount."
         }
         val date = required("date").trim()
@@ -65,7 +66,8 @@ internal fun readExpenseCsv(csv: String): List<ExpenseCsvRow> {
         val quantity = requireNotNull(values["quantity"].orEmpty().trim().ifEmpty { "1" }.toLongOrNull()) {
             "CSV row $number must have a whole number for quantity."
         }
-        ExpenseCsvRow(number, required("title"), required("category"), amount, date, wallet, quantity)
+        require(quantity > 0) { "CSV row $number: Quantity must be a positive whole number." }
+        ExpenseCsvRow(number, required("title"), required("category"), lineTotal, date, wallet, quantity)
     }
 }
 

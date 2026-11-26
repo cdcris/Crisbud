@@ -113,8 +113,8 @@ fun CrisbudApp() {
                             sql = repository::exportSql,
                             onSqlImported = { sql -> repository.importSql(sql); revision++ },
                             csv = repository::exportCsv,
-                            onCsvImported = { csv ->
-                                repository.importCsv(csv)
+                            onCsvImported = { rows ->
+                                repository.importCsv(rows)
                                 revision++
                             },
                             onFileMessage = { fileMessage = it },

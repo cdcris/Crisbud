@@ -207,21 +207,24 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
         }
     }
 
-    fun importCsv(csv: String) {
-        val rows = readExpenseCsv(csv)
+    fun importCsv(csv: String) = importCsv(readExpenseCsv(csv))
+
+    internal fun importCsv(rows: List<ExpenseCsvRow>) {
         database.transaction {
             val categoryIds = q.selectCategories().executeAsList().associate { it.name to it.id }.toMutableMap()
             val walletIds = q.selectWallets().executeAsList().associate { it.name to it.id }.toMutableMap()
             rows.forEach { row ->
                 try {
-                    validateTransactionQuantity(row.quantity, row.amount, income = false)
+                    val unitPrice = row.lineTotal / row.quantity
+                    require(unitPrice > 0) { "The unit price is too small." }
+                    validateTransactionQuantity(row.quantity, unitPrice, income = false)
                     val category = categoryIds.resolveCsvReference(row.category, "category") { ensureCategory(it) }
                     val wallet = walletIds.resolveCsvReference(row.wallet, "wallet") { name ->
                         q.ensureWallet(name)
                         walletId(name)
                     }
                     q.insertTransaction(
-                        null, row.title, category, row.amount, RecordKind.EXPENSE, row.date, wallet, row.quantity
+                        null, row.title, category, unitPrice, RecordKind.EXPENSE, row.date, wallet, row.quantity
                     )
                 } catch (exception: Exception) {
                     throw IllegalArgumentException("CSV row ${row.number}: ${exception.message.orEmpty()}", exception)

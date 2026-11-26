@@ -1,8 +1,10 @@
 package android.com.crisbud
 
 import android.com.crisbud.db.CSV_SAMPLE_NAME
+import android.com.crisbud.db.ExpenseCsvRow
 import android.com.crisbud.db.SqlFileActions
 import android.com.crisbud.db.StoredWallet
+import android.com.crisbud.db.readExpenseCsv
 import android.com.crisbud.db.rememberCsvFileActions
 import android.com.crisbud.resources.Res
 import androidx.compose.foundation.Canvas
@@ -65,7 +67,7 @@ internal fun SettingsScreen(
     sql: () -> String,
     onSqlImported: (String) -> Unit,
     csv: () -> String,
-    onCsvImported: (String) -> Unit,
+    onCsvImported: (List<ExpenseCsvRow>) -> Unit,
     onFileMessage: (String) -> Unit,
     onResetData: () -> Boolean
 ) {
@@ -76,7 +78,16 @@ internal fun SettingsScreen(
         value = Res.readBytes("files/$CSV_SAMPLE_NAME").decodeToString()
     }
     val csvFiles = rememberCsvFileActions(
-        csv, { checkNotNull(csvSample) { "The CSV sample is still loading." } }, onCsvImported, onFileMessage
+        csv,
+        { checkNotNull(csvSample) { "The CSV sample is still loading." } },
+        onImport = { text ->
+            val rows = readExpenseCsv(text)
+            require(rows.isNotEmpty()) { "The CSV has no expense entries to import." }
+            onCsvImported(rows)
+            val count = if (rows.size == 1) "1 expense entry" else "${rows.size} expense entries"
+            onFileMessage("Imported $count totaling ${money(rows.sumOf { it.lineTotal })}.")
+        },
+        onMessage = onFileMessage
     )
     val colors = MaterialTheme.colorScheme
     LazyColumn(
@@ -140,7 +151,7 @@ internal fun SettingsScreen(
                             Text("Expense CSV", style = MaterialTheme.typography.titleMedium)
                         }
                         Text(
-                            "Export expense transactions to a spreadsheet or use the sample to add expenses. " +
+                            "The amount column contains the total for each expense. " +
                                 "Imports create any missing categories and wallets.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = colors.onSurfaceVariant

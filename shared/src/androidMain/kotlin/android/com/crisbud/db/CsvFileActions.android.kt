@@ -36,8 +36,7 @@ internal actual fun rememberCsvFileActions(
             val stream = checkNotNull(resolver.openInputStream(uri)) { "Could not read the CSV file." }
             val bytes = stream.use { it.readBytes() }
             onImport(bytes.decodeToString(throwOnInvalidSequence = true))
-        }.onSuccess { onMessage("Expense CSV imported.") }
-            .onFailure { onMessage(it.message ?: "Could not import the CSV file.") }
+        }.onFailure { onMessage(it.message ?: "Could not import the CSV file.") }
     }
 
     return CsvFileActions(

@@ -67,8 +67,7 @@ internal actual fun rememberCsvFileActions(
                 if (url != null) runCatching {
                     val text = NSString.create(contentsOfURL = url, encoding = NSUTF8StringEncoding, error = null)
                     latestImport.value(checkNotNull(text) { "Could not read the CSV file as UTF-8." }.toString())
-                }.onSuccess { latestMessage.value("Expense CSV imported.") }
-                    .onFailure { latestMessage.value(it.message ?: "Could not import the CSV file.") }
+                }.onFailure { latestMessage.value(it.message ?: "Could not import the CSV file.") }
             }
         }
     )

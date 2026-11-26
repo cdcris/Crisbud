@@ -98,6 +98,7 @@ class DatabaseMigrationTest {
         val recurring = repository.recurring()
         val csv = repository.exportCsv()
         assertTrue(csv.startsWith("\uFEFFtitle,category,amount,date,wallet,quantity\r\n"))
+        assertTrue(csv.contains(",Food & Drink,150.0,2026-11-25,Cash,3\r\n"))
         assertFalse(csv.contains("Monthly salary"))
         assertFalse(csv.contains("580.25"))
         assertFalse(csv.contains("Streaming"))
@@ -141,6 +142,30 @@ class DatabaseMigrationTest {
     }
 
     @Test
+    fun csvLineTotalsPreserveExpenseAmountsQuantitiesAndRepeatedRows() = withDatabase { driver ->
+        CrisbudDatabase.Schema.create(driver)
+        val repository = BudgetRepository(driver)
+        repository.importCsv(
+            """
+            title,category,amount,date,wallet,quantity
+            Fasteners,Parts,237.65,2026-10-18,GCash,1000
+            Cable,Parts,10.00,2026-11-25,GCash,3
+            Cable,Parts,10.00,2026-11-25,GCash,3
+            """.trimIndent()
+        )
+
+        val transactions = repository.transactions()
+        assertEquals(listOf(3L, 3L, 1000L), transactions.map { it.quantity })
+        assertEquals(257.65, transactions.sumOf { it.amount * it.quantity }, absoluteTolerance = 0.000001)
+        repository.addBudget("Parts", "2026-11", 100.0)
+        assertEquals(20.0, repository.budgets("2026-11").single().spent, absoluteTolerance = 0.000001)
+
+        repository.importCsv(repository.exportCsv())
+        assertEquals(6, repository.transactions().size)
+        assertEquals(515.30, repository.transactions().sumOf { it.amount * it.quantity }, absoluteTolerance = 0.000001)
+    }
+
+    @Test
     fun invalidExpenseCsvRollsBackExpensesAndNewReferences() = withDatabase { driver ->
         CrisbudDatabase.Schema.create(driver)
         val repository = BudgetRepository(driver)
@@ -149,11 +174,15 @@ class DatabaseMigrationTest {
         val invalid = """
             title,category,amount,date,wallet,quantity
             Lunch,Meals,12.5,2026-11-25,New wallet,1
-            Dinner,Meals,8.0,2026-11-25,New wallet,0
+            Dinner,Meals,5e-324,2026-11-25,New wallet,2
         """.trimIndent()
         val error = assertFailsWith<IllegalArgumentException> { repository.importCsv(invalid) }
-        assertTrue(error.message.orEmpty().startsWith("CSV row 3: Quantity"))
+        assertTrue(error.message.orEmpty().startsWith("CSV row 3: The unit price"))
         assertEquals(sql, repository.exportSql())
+        val quantityError = assertFailsWith<IllegalArgumentException> {
+            repository.importCsv(invalid.replace("5e-324,2026-11-25,New wallet,2", "8.0,2026-11-25,New wallet,0"))
+        }
+        assertTrue(quantityError.message.orEmpty().startsWith("CSV row 3: Quantity"))
         assertFailsWith<IllegalArgumentException> {
             repository.importCsv("title,category,amount,date,income\nSalary,Income,100,2026-11-25,1")
         }
@@ -178,6 +207,7 @@ class DatabaseMigrationTest {
         assertEquals("Lunch", expense.title)
         assertEquals(RecordKind.EXPENSE, expense.kind)
         assertEquals(2L, expense.quantity)
+        assertEquals(6.25, expense.amount)
         assertEquals(listOf("Food"), repository.categories().map { it.first })
         assertEquals("Bank", repository.walletBalances().single().name)
         assertEquals(0.0, repository.walletBalances().single().balance)
