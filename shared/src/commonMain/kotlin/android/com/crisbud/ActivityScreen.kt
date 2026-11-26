@@ -293,7 +293,7 @@ private fun TransactionForm(
 ) {
     val categories = categoryNames
     val wallets = (walletNames + listOfNotNull(entry?.wallet)).distinct()
-    var description by rememberSaveable(entry?.id) { mutableStateOf(entry?.title.orEmpty()) }
+    var title by rememberSaveable(entry?.id) { mutableStateOf(entry?.title.orEmpty()) }
     var amount by rememberSaveable(entry?.id) { mutableStateOf(entry?.unitAmount?.toString().orEmpty()) }
     var quantityText by rememberSaveable(entry?.id) { mutableStateOf((entry?.quantity ?: 1).toString()) }
     var income by rememberSaveable(entry?.id) { mutableStateOf(entry?.income ?: false) }
@@ -313,11 +313,11 @@ private fun TransactionForm(
         title = if (entry == null) "New transaction" else "Edit transaction",
         onDismiss = onDismiss,
         actionLabel = if (entry == null) "Add transaction" else "Save changes",
-        saveEnabled = description.isNotBlank() && total != null && !totalTooLarge &&
+        saveEnabled = title.isNotBlank() && total != null && !totalTooLarge &&
             millis != null && category in categories && wallet in wallets,
         onSave = {
             if (value != null && quantity != null && !totalTooLarge) {
-                onSave(Transaction(entry?.id ?: 0L, description.trim(), category, value, income, date, wallet, date, quantity))
+                onSave(Transaction(entry?.id ?: 0L, title.trim(), category, value, income, date, wallet, date, quantity))
             }
         }
     ) {
@@ -361,9 +361,9 @@ private fun TransactionForm(
             )
         }
         OutlinedTextField(
-            value = description,
-            onValueChange = { description = it },
-            label = { Text("Description") },
+            value = title,
+            onValueChange = { title = it },
+            label = { Text("Title") },
             singleLine = true,
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth()
