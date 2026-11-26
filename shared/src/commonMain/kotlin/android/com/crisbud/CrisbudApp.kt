@@ -105,8 +105,13 @@ fun CrisbudApp() {
                         )
                         Screen.Settings -> SettingsScreen(
                             padding, categories, walletBalances,
-                            onAddCategory = { repository.addCategory(it); revision++ },
-                            onRenameCategory = { old, new -> repository.renameCategory(old, new).also { if (it) revision++ } },
+                            onAddCategory = { name, icon ->
+                                repository.addCategory(name, icon)
+                                revision++
+                            },
+                            onEditCategory = { oldName, name, icon ->
+                                repository.updateCategory(oldName, name, icon).also { if (it) revision++ }
+                            },
                             onDeleteCategory = { name -> repository.deleteCategory(name).also { if (it) revision++ } },
                             onAddWallet = { repository.addWallet(it); revision++ },
                             onRenameWallet = { old, new -> repository.renameWallet(old, new).also { if (it) revision++ } },

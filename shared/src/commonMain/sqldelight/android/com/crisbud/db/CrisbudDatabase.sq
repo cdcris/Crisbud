@@ -101,8 +101,8 @@ INSERT OR IGNORE INTO Category(name, icon, kind) VALUES (?, ?, ?);
 restoreCategory:
 INSERT INTO Category(name, icon, kind) VALUES (?, ?, ?);
 
-renameCategory:
-UPDATE Category SET name = ? WHERE name = ?;
+updateCategory:
+UPDATE Category SET name = :name, icon = coalesce(:icon, icon) WHERE id = :id;
 
 deleteCategory:
 DELETE FROM Category WHERE id = ?;

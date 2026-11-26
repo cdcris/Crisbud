@@ -112,10 +112,14 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
 
     fun addCategory(name: String, icon: String = "•") = q.ensureCategory(name, icon, RecordKind.EXPENSE)
 
-    fun renameCategory(oldName: String, newName: String): Boolean = database.transactionWithResult {
-        if (oldName == newName) return@transactionWithResult true
-        if (categories().any { (name) -> name.equals(newName, ignoreCase = true) }) return@transactionWithResult false
-        q.renameCategory(newName, oldName)
+    fun renameCategory(oldName: String, newName: String): Boolean = updateCategory(oldName, newName)
+
+    internal fun updateCategory(oldName: String, newName: String, icon: String? = null): Boolean = database.transactionWithResult {
+        val id = q.categoryId(oldName).executeAsOneOrNull() ?: return@transactionWithResult false
+        if (oldName != newName && categories().any { (name) -> name != oldName && name.equals(newName, ignoreCase = true) }) {
+            return@transactionWithResult false
+        }
+        q.updateCategory(newName, icon, id)
         true
     }
 

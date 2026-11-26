@@ -1,12 +1,8 @@
 package android.com.crisbud
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.CutCornerShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
@@ -15,17 +11,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-
-internal val LocalCategoryIcons = compositionLocalOf<Map<String, String>> { emptyMap() }
 
 @Composable
 internal fun PageHeading(title: String, modifier: Modifier = Modifier, trailing: @Composable (() -> Unit)? = null) {
@@ -67,39 +59,6 @@ internal fun SectionHeading(title: String, actionLabel: String? = null, onAction
         }
     }
 }
-
-private data class CategoryStyle(val icon: ImageVector, val shape: Shape, val background: Color, val foreground: Color)
-
-@Composable
-private fun categoryStyle(symbol: String?, category: String?): CategoryStyle {
-    val colors = MaterialTheme.colorScheme
-    val flower = RoundedCornerShape(topStartPercent = 48, topEndPercent = 48, bottomStartPercent = 22, bottomEndPercent = 48)
-    return when (symbol ?: category) {
-        "🍜", "Food & Drink" -> CategoryStyle(Icons.Rounded.Restaurant, flower, colors.tertiaryContainer, colors.onTertiaryContainer)
-        "🚆", "Transport" -> CategoryStyle(Icons.Rounded.DirectionsTransit, CutCornerShape(25), colors.secondaryContainer, colors.onSecondaryContainer)
-        "⌂", "Home" -> CategoryStyle(Icons.Rounded.Cottage, RoundedCornerShape(28), colors.primaryContainer, colors.onPrimaryContainer)
-        "🛍", "Shopping" -> CategoryStyle(Icons.Rounded.ShoppingBag, RoundedCornerShape(30), colors.tertiaryContainer, colors.onTertiaryContainer)
-        "＋", "Health" -> CategoryStyle(Icons.Rounded.Favorite, flower, colors.errorContainer, colors.onErrorContainer)
-        "↗", "Income" -> CategoryStyle(Icons.Rounded.SouthWest, CircleShape, colors.secondaryContainer, colors.onSecondaryContainer)
-        else -> CategoryStyle(Icons.Rounded.Category, RoundedCornerShape(34), colors.primaryContainer, colors.onPrimaryContainer)
-    }
-}
-
-@Composable
-internal fun CategoryBadge(category: String?, modifier: Modifier = Modifier) {
-    val icons = LocalCategoryIcons.current
-    val symbol = category?.let { icons[it] }
-    val style = categoryStyle(symbol, category)
-    Box(modifier.size(42.dp).background(style.background, style.shape), contentAlignment = Alignment.Center) {
-        if (symbol != null && symbol.isNotBlank() && symbol !in knownCategorySymbols) {
-            Text(symbol, style = MaterialTheme.typography.titleMedium, color = style.foreground)
-        } else {
-            Icon(style.icon, null, Modifier.size(21.dp), tint = style.foreground)
-        }
-    }
-}
-
-private val knownCategorySymbols = setOf("🍜", "🚆", "⌂", "🛍", "＋", "↗", "•")
 
 @Composable
 internal fun RecordActions(
@@ -182,13 +141,16 @@ internal fun ChoiceField(
     value: String,
     options: List<String>,
     onClear: (() -> Unit)? = null,
+    optionLabel: (String) -> String = { it },
+    optionIcon: (@Composable (String) -> Unit)? = null,
     onSelect: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it && options.isNotEmpty() }) {
         OutlinedTextField(
-            value = value, onValueChange = {}, readOnly = true, singleLine = true,
+            value = optionLabel(value), onValueChange = {}, readOnly = true, singleLine = true,
             label = { Text(label) }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            leadingIcon = optionIcon?.let { icon -> { icon(value) } },
             modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
             shape = MaterialTheme.shapes.medium
         )
@@ -205,8 +167,10 @@ internal fun ChoiceField(
             }
             options.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(option) },
+                    text = { Text(optionLabel(option)) },
+                    leadingIcon = optionIcon?.let { icon -> { icon(option) } },
                     trailingIcon = { if (option == value) Icon(Icons.Rounded.Check, null) },
+                    modifier = Modifier.semantics { selected = option == value },
                     onClick = { onSelect(option); expanded = false }
                 )
             }

@@ -49,7 +49,7 @@ private enum class ManagedList(val title: String, val itemName: String) {
     Categories("Categories", "category")
 }
 
-private data class SettingsRecord(val name: String, val balance: Double? = null)
+private data class SettingsRecord(val name: String, val balance: Double? = null, val categoryIcon: String? = null)
 
 @Composable
 @OptIn(ExperimentalResourceApi::class)
@@ -57,8 +57,8 @@ internal fun SettingsScreen(
     padding: PaddingValues,
     categories: List<Pair<String, String>>,
     wallets: List<StoredWallet>,
-    onAddCategory: (String) -> Unit,
-    onRenameCategory: (String, String) -> Boolean,
+    onAddCategory: (String, String) -> Unit,
+    onEditCategory: (String, String, String) -> Boolean,
     onDeleteCategory: (String) -> Boolean,
     onAddWallet: (String) -> Unit,
     onRenameWallet: (String, String) -> Boolean,
@@ -206,12 +206,12 @@ internal fun SettingsScreen(
             list = ManagedList.Wallets,
             records = wallets.map { SettingsRecord(it.name, it.balance) },
             onDismiss = { managedList = null },
-            onSave = { oldName, name, balance ->
-                if (oldName != null && !onRenameWallet(oldName, name)) {
+            onSave = { oldName, record ->
+                if (oldName != null && !onRenameWallet(oldName, record.name)) {
                     "This wallet name is already in use."
                 } else {
-                    if (oldName == null) onAddWallet(name)
-                    onSetWalletBalance(name, requireNotNull(balance))
+                    if (oldName == null) onAddWallet(record.name)
+                    onSetWalletBalance(record.name, requireNotNull(record.balance))
                     null
                 }
             },
@@ -225,16 +225,17 @@ internal fun SettingsScreen(
         )
         ManagedList.Categories -> ManageRecords(
             list = ManagedList.Categories,
-            records = categories.map { SettingsRecord(it.first) },
+            records = categories.map { (name, icon) -> SettingsRecord(name, categoryIcon = icon) },
             onDismiss = { managedList = null },
-            onSave = { oldName, name, _ ->
+            onSave = { oldName, record ->
+                val icon = requireNotNull(record.categoryIcon)
                 when {
                     oldName == null -> {
-                        onAddCategory(name)
+                        onAddCategory(record.name, icon)
                         null
                     }
-                    onRenameCategory(oldName, name) -> null
-                    else -> "This name is already in use or has an overlapping budget."
+                    onEditCategory(oldName, record.name, icon) -> null
+                    else -> "Couldn’t save this category. Check that the name is available."
                 }
             },
             onDelete = { name ->
@@ -327,7 +328,7 @@ private fun ManageRecords(
     list: ManagedList,
     records: List<SettingsRecord>,
     onDismiss: () -> Unit,
-    onSave: (String?, String, Double?) -> String?,
+    onSave: (String?, SettingsRecord) -> String?,
     onDelete: (String) -> String?
 ) {
     var editorOpen by rememberSaveable { mutableStateOf(false) }
@@ -340,8 +341,8 @@ private fun ManageRecords(
         RecordEditor(
             list, editingName, records,
             onDismiss = { editorOpen = false },
-            onSave = { name, balance ->
-                val error = onSave(editingName, name, balance)
+            onSave = { record ->
+                val error = onSave(editingName, record)
                 if (error == null) editorOpen = false
                 error
             }
@@ -449,12 +450,14 @@ private fun RecordEditor(
     initialName: String?,
     records: List<SettingsRecord>,
     onDismiss: () -> Unit,
-    onSave: (String, Double?) -> String?
+    onSave: (SettingsRecord) -> String?
 ) {
     val wallet = list == ManagedList.Wallets
-    val initialBalance = records.firstOrNull { it.name == initialName }?.balance
+    val initialRecord = records.firstOrNull { it.name == initialName }
+    val initialIcon = initialRecord?.categoryIcon ?: CategoryIcon.General.id
     var name by rememberSaveable(initialName) { mutableStateOf(initialName.orEmpty()) }
-    var amount by rememberSaveable(initialName) { mutableStateOf(initialBalance?.toString() ?: "0") }
+    var amount by rememberSaveable(initialName) { mutableStateOf(initialRecord?.balance?.toString() ?: "0") }
+    var icon by rememberSaveable(initialName) { mutableStateOf(initialIcon) }
     var errorMessage by rememberSaveable(initialName) { mutableStateOf<String?>(null) }
     val balance = amount.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 }
     val trimmedName = name.trim()
@@ -465,7 +468,10 @@ private fun RecordEditor(
         title = if (initialName == null) "Add ${list.itemName}" else "Edit ${list.itemName}",
         onDismiss = onDismiss,
         actionLabel = if (initialName == null) "Add ${list.itemName}" else "Save changes",
-        onSave = { errorMessage = onSave(trimmedName, if (wallet) balance else null) },
+        onSave = {
+            val record = if (wallet) SettingsRecord(trimmedName, balance) else SettingsRecord(trimmedName, categoryIcon = icon)
+            errorMessage = onSave(record)
+        },
         saveEnabled = trimmedName.isNotEmpty() && !duplicate && (!wallet || balance != null)
     ) {
         OutlinedTextField(
@@ -481,17 +487,21 @@ private fun RecordEditor(
             supportingText = nameError?.let { { Text(it) } },
             shape = MaterialTheme.shapes.medium
         )
-        if (wallet) OutlinedTextField(
-            value = amount,
-            onValueChange = { amount = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Current balance") },
-            prefix = { Text("₱") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            isError = amount.isNotEmpty() && balance == null,
-            supportingText = if (amount.isNotEmpty() && balance == null) { { Text("Enter zero or a positive amount.") } } else null,
-            shape = MaterialTheme.shapes.medium
-        )
+        if (wallet) {
+            OutlinedTextField(
+                value = amount,
+                onValueChange = { amount = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Current balance") },
+                prefix = { Text("₱") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                isError = amount.isNotEmpty() && balance == null,
+                supportingText = if (amount.isNotEmpty() && balance == null) { { Text("Enter zero or a positive amount.") } } else null,
+                shape = MaterialTheme.shapes.medium
+            )
+        } else {
+            CategoryIconField(symbol = icon, initialSymbol = initialIcon) { icon = it }
+        }
     }
 }

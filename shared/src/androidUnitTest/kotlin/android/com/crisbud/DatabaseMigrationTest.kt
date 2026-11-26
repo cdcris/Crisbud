@@ -104,6 +104,32 @@ class DatabaseMigrationTest {
     }
 
     @Test
+    fun categoryIconEditsKeepLinksAndSurviveBackupRestore() = withDatabase { driver ->
+        CrisbudDatabase.Schema.create(driver)
+        val repository = BudgetRepository(driver)
+        repository.addCategory("Pets", CategoryIcon.Pets.id)
+        repository.addCategory("Food", "🍜")
+        repository.addWallet("Cash")
+        repository.addTransaction("Pet food", "Pets", 25.0, false, "2026-11-20", "Cash")
+        repository.addBudget("Pets", "2026-11", 100.0)
+        repository.addRecurring("Pet care", "Pets", 20.0, 1)
+
+        assertEquals(CategoryIcon.Pets.id, repository.categories().toMap()["Pets"])
+        assertTrue(repository.updateCategory("Pets", "Pets", CategoryIcon.Shopping.id))
+        assertFalse(repository.updateCategory("Pets", "food", CategoryIcon.Food.id))
+        assertEquals(CategoryIcon.Shopping.id, repository.categories().toMap()["Pets"])
+        assertTrue(repository.updateCategory("Pets", "Pet care", CategoryIcon.Health.id))
+        assertTrue(repository.renameCategory("Food", "Meals"))
+
+        val backup = repository.exportSql()
+        repository.importSql(backup)
+        assertEquals(mapOf("Meals" to "🍜", "Pet care" to CategoryIcon.Health.id), repository.categories().toMap())
+        assertEquals("Pet care", repository.transactions().single().category)
+        assertEquals("Pet care", repository.budgets("2026-11").single().category)
+        assertEquals("Pet care", repository.recurring().single().category)
+    }
+
+    @Test
     fun legacyBackupRestoresAndFailedReplacementRollsBack() = withDatabase { driver ->
         CrisbudDatabase.Schema.create(driver)
         val repository = BudgetRepository(driver)
