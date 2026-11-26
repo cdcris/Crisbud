@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -41,14 +42,17 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -65,6 +69,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 private const val ALL_TIME = "All time"
 private const val NO_CATEGORY = ""
@@ -99,108 +104,128 @@ internal fun ActivityScreen(
     }
     val colors = MaterialTheme.colorScheme
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(padding),
-        contentPadding = PaddingValues(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 32.dp)
-    ) {
-        item {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ActivityFilterPicker(
-                    selected = activePeriod,
-                    options = periods,
-                    label = ::monthLabel,
-                    description = "Period filter",
-                    modifier = Modifier.weight(1f),
-                    onSelect = { selectedPeriod = it }
-                )
-                ActivityFilterPicker(
-                    selected = activeCategory,
-                    options = listOf(null, NO_CATEGORY) + categoryOptions,
-                    label = {
-                        when (it) {
-                            null -> "All categories"
-                            NO_CATEGORY -> "No category"
-                            else -> it
-                        }
-                    },
-                    description = "Category filter",
-                    modifier = Modifier.weight(1f),
-                    onSelect = { selectedCategory = it }
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            val count = entries.size
-            Text(
-                if (count == 1) "1 entry" else "$count entries",
-                modifier = Modifier.fillMaxWidth(),
-                color = colors.onSurfaceVariant,
-                style = MaterialTheme.typography.labelLarge,
-                textAlign = TextAlign.End
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                ActivityTotal(
-                    "Income", entries.filter { it.income }.sumOf { it.totalAmount },
-                    Icons.Rounded.ArrowDownward, colors.primaryContainer, colors.onPrimaryContainer,
-                    RoundedCornerShape(24.dp, 8.dp, 8.dp, 24.dp), Modifier.weight(1f)
-                )
-                ActivityTotal(
-                    "Expenses", entries.filter { !it.income }.sumOf { it.totalAmount },
-                    Icons.Rounded.ArrowUpward, colors.tertiaryContainer, colors.onTertiaryContainer,
-                    RoundedCornerShape(8.dp, 24.dp, 24.dp, 8.dp), Modifier.weight(1f)
-                )
-            }
-        }
-        if (entries.isEmpty()) {
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    val showBackToTop by remember {
+        derivedStateOf { listState.firstVisibleItemIndex > 0 }
+    }
+
+    Box(Modifier.fillMaxSize().padding(padding)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            contentPadding = PaddingValues(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 76.dp)
+        ) {
             item {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
-                    shape = MaterialTheme.shapes.large,
-                    color = colors.surfaceContainerLow
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        Modifier.padding(24.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                    ActivityFilterPicker(
+                        selected = activePeriod,
+                        options = periods,
+                        label = ::monthLabel,
+                        description = "Period filter",
+                        modifier = Modifier.weight(1f),
+                        onSelect = { selectedPeriod = it }
+                    )
+                    ActivityFilterPicker(
+                        selected = activeCategory,
+                        options = listOf(null, NO_CATEGORY) + categoryOptions,
+                        label = {
+                            when (it) {
+                                null -> "All categories"
+                                NO_CATEGORY -> "No category"
+                                else -> it
+                            }
+                        },
+                        description = "Category filter",
+                        modifier = Modifier.weight(1f),
+                        onSelect = { selectedCategory = it }
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                val count = entries.size
+                Text(
+                    if (count == 1) "1 entry" else "$count entries",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = colors.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelLarge,
+                    textAlign = TextAlign.End
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ActivityTotal(
+                        "Income", entries.filter { it.income }.sumOf { it.totalAmount },
+                        Icons.Rounded.ArrowDownward, colors.primaryContainer, colors.onPrimaryContainer,
+                        RoundedCornerShape(24.dp, 8.dp, 8.dp, 24.dp), Modifier.weight(1f)
+                    )
+                    ActivityTotal(
+                        "Expenses", entries.filter { !it.income }.sumOf { it.totalAmount },
+                        Icons.Rounded.ArrowUpward, colors.tertiaryContainer, colors.onTertiaryContainer,
+                        RoundedCornerShape(8.dp, 24.dp, 24.dp, 8.dp), Modifier.weight(1f)
+                    )
+                }
+            }
+            if (entries.isEmpty()) {
+                item {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+                        shape = MaterialTheme.shapes.large,
+                        color = colors.surfaceContainerLow
                     ) {
-                        Icon(Icons.AutoMirrored.Rounded.ReceiptLong, null, tint = colors.primary)
-                        Text(
-                            when {
-                                activeCategory == NO_CATEGORY -> "No transactions without a category"
-                                activeCategory != null -> "No transactions match this category"
-                                activePeriod == ALL_TIME -> "No transactions"
-                                else -> "No transactions this month"
-                            },
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Column(
+                            Modifier.padding(24.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.ReceiptLong, null, tint = colors.primary)
+                            Text(
+                                when {
+                                    activeCategory == NO_CATEGORY -> "No transactions without a category"
+                                    activeCategory != null -> "No transactions match this category"
+                                    activePeriod == ALL_TIME -> "No transactions"
+                                    else -> "No transactions this month"
+                                },
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
                     }
                 }
             }
-        }
-        entries.groupBy { it.date }.forEach { (date, dayEntries) ->
-            item(key = "day-$date") {
-                Text(
-                    if (dayEntries.first().day == "Today") "Today" else activityDate(date),
-                    modifier = Modifier.padding(start = 4.dp, top = 24.dp, bottom = 8.dp).semantics { heading() },
-                    color = colors.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
-            itemsIndexed(dayEntries, key = { _, entry -> entry.id }) { index, entry ->
-                val top = if (index == 0) 20.dp else 5.dp
-                val bottom = if (index == dayEntries.lastIndex) 20.dp else 5.dp
-                RecordActions(
-                    label = entry.title,
-                    onEdit = { editingId = entry.id },
-                    onDelete = { deletingId = entry.id }
-                ) { actions ->
-                    LedgerRow(entry, RoundedCornerShape(top, top, bottom, bottom), actions)
+            entries.groupBy { it.date }.forEach { (date, dayEntries) ->
+                item(key = "day-$date") {
+                    Text(
+                        if (dayEntries.first().day == "Today") "Today" else activityDate(date),
+                        modifier = Modifier.padding(start = 4.dp, top = 24.dp, bottom = 8.dp).semantics { heading() },
+                        color = colors.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelLarge
+                    )
                 }
-                Spacer(Modifier.height(3.dp))
+                itemsIndexed(dayEntries, key = { _, entry -> entry.id }) { index, entry ->
+                    val top = if (index == 0) 20.dp else 5.dp
+                    val bottom = if (index == dayEntries.lastIndex) 20.dp else 5.dp
+                    RecordActions(
+                        label = entry.title,
+                        onEdit = { editingId = entry.id },
+                        onDelete = { deletingId = entry.id }
+                    ) { actions ->
+                        LedgerRow(entry, RoundedCornerShape(top, top, bottom, bottom), actions)
+                    }
+                    Spacer(Modifier.height(3.dp))
+                }
+            }
+        }
+        if (showBackToTop) {
+            SmallFloatingActionButton(
+                onClick = { coroutineScope.launch { listState.animateScrollToItem(0) } },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 20.dp, bottom = 16.dp)
+                    .size(48.dp)
+            ) {
+                Icon(Icons.Rounded.ArrowUpward, contentDescription = "Back to top")
             }
         }
     }

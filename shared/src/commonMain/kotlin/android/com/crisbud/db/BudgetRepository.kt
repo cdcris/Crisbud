@@ -65,7 +65,7 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
         validateTransactionQuantity(quantity, amount, income)
         database.transaction {
             q.insertTransaction(
-                null, title, category?.let(::categoryId), amount, RecordKind.fromIncome(income), date, walletId(wallet), quantity
+                title, category?.let(::categoryId), amount, RecordKind.fromIncome(income), date, walletId(wallet), quantity
             )
         }
     }
@@ -169,36 +169,12 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
         "{\"transactions\":[$tx],\"wallets\":[$walletItems],\"categories\":[$cats],\"budgets\":[$budgetItems],\"recurring\":[$recurringItems]}"
     }
 
-    private val backupClearOrder = listOf(
-        BackupTable.ENTRIES, BackupTable.BUDGET, BackupTable.RECURRINGITEM, BackupTable.CATEGORY, BackupTable.WALLET
-    )
-
     fun resetData() = database.transaction {
-        backupClearOrder.forEach(::clearBackupTable)
-    }
-
-    private fun forEachBackupRow(emit: (BackupTable, List<Any?>) -> Unit) {
-        q.selectCategories().executeAsList().forEach {
-            emit(BackupTable.CATEGORY, listOf(it.name, it.icon, it.kind.code))
-        }
-        walletBalances().forEach {
-            emit(BackupTable.WALLET, listOf(it.name, it.balance))
-        }
-        transactions().sortedBy { it.id }.forEach {
-            emit(
-                BackupTable.ENTRIES,
-                listOf(it.id, it.title, it.category, it.amount, it.kind.code, it.date, it.wallet, it.quantity)
-            )
-        }
-        q.exportBudgets().executeAsList().forEach {
-            emit(BackupTable.BUDGET, listOf(it.id, it.category, it.month, it.limit_amount))
-        }
-        q.exportRecurringItems().executeAsList().forEach {
-            emit(
-                BackupTable.RECURRINGITEM,
-                listOf(it.id, it.title, it.category, it.amount, it.due_day, it.cadence, if (it.active) 1 else 0)
-            )
-        }
+        q.clearEntries()
+        q.clearBudgets()
+        q.clearRecurringItems()
+        q.clearCategories()
+        q.clearWallets()
     }
 
     fun exportCsv(): String = database.transactionWithResult {
@@ -229,7 +205,7 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
                         walletId(name)
                     }
                     q.insertTransaction(
-                        null, row.title, category, unitPrice, RecordKind.EXPENSE, row.date, wallet, row.quantity
+                        row.title, category, unitPrice, RecordKind.EXPENSE, row.date, wallet, row.quantity
                     )
                 } catch (exception: Exception) {
                     throw IllegalArgumentException("CSV row ${row.number}: ${exception.message.orEmpty()}", exception)
@@ -249,77 +225,6 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
         val matches = keys.filter { it.trim().equals(trimmedName, ignoreCase = true) }
         require(matches.size <= 1) { "Multiple records match the $field \"$trimmedName\". Use its exact name." }
         return matches.singleOrNull()?.let { getValue(it) } ?: getOrPut(trimmedName) { insert(trimmedName) }
-    }
-
-    fun exportSql(): String = database.transactionWithResult {
-        buildString {
-            appendLine(SQL_BACKUP_HEADER)
-            appendLine("BEGIN TRANSACTION;")
-            backupClearOrder.forEach { appendLine("DELETE FROM ${it.sqlName};") }
-            forEachBackupRow { table, fields ->
-                appendInsert("${table.sqlName}(${table.columns.joinToString(", ")})", fields)
-            }
-            appendLine("COMMIT;")
-        }
-    }
-
-    fun importSql(sql: String) {
-        val statements = readSqlBackup(sql)
-        database.transaction {
-            statements.forEach { statement ->
-                when (statement) {
-                    is BackupStatement.Delete -> clearBackupTable(statement.table)
-                    is BackupStatement.Insert -> importBackupRow(statement)
-                }
-            }
-        }
-    }
-
-    private fun clearBackupTable(table: BackupTable) {
-        when (table) {
-            BackupTable.ENTRIES -> q.clearEntries()
-            BackupTable.BUDGET -> q.clearBudgets()
-            BackupTable.RECURRINGITEM -> q.clearRecurringItems()
-            BackupTable.CATEGORY -> q.clearCategories()
-            BackupTable.WALLET -> q.clearWallets()
-        }
-    }
-
-    private fun importBackupRow(row: BackupStatement.Insert) {
-        when (row.table) {
-            BackupTable.CATEGORY -> q.restoreCategory(row.text("name"), row.text("icon", "•"),
-                RecordKind.fromIncome(row.integer("is_income", "0") != 0L))
-            BackupTable.WALLET -> q.restoreWallet(row.text("name"), row.decimal("balance", "0"))
-            BackupTable.ENTRIES -> {
-                val income = row.integer("income") != 0L
-                val amount = row.decimal("amount")
-                val quantity = row.integer("quantity", "1")
-                validateTransactionQuantity(quantity, amount, income)
-                val wallet = row.text("wallet", "Cash")
-                q.ensureWallet(wallet)
-                val kind = RecordKind.fromIncome(income)
-                q.insertTransaction(
-                    row.id(), row.text("title"), row.nullableText("category")?.let { ensureCategory(it, kind) },
-                    amount, kind, row.text("date"), walletId(wallet), quantity
-                )
-            }
-            BackupTable.BUDGET -> q.restoreBudget(row.id(), row.nullableText("category")?.let { ensureCategory(it) },
-                row.text("month"), row.decimal("limit_amount"))
-            BackupTable.RECURRINGITEM -> q.restoreRecurringItem(row.id(), row.text("title"),
-                row.nullableText("category")?.let { ensureCategory(it) }, row.decimal("amount"), row.integer("due_day"),
-                row.text("cadence", "Monthly"), row.integer("active", "1") != 0L)
-        }
-    }
-
-    private fun StringBuilder.appendInsert(tableAndColumns: String, values: List<Any?>) {
-        val literals = values.joinToString(", ") {
-            when (it) {
-                null -> "NULL"
-                is String -> "'${it.replace("'", "''")}'"
-                else -> it.toString()
-            }
-        }
-        appendLine("INSERT INTO $tableAndColumns VALUES ($literals);")
     }
 
     private fun jsonCategory(value: String?) = value?.let { "\"${escape(it)}\"" } ?: "null"

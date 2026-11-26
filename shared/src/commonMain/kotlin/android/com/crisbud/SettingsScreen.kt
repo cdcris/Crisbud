@@ -2,7 +2,6 @@ package android.com.crisbud
 
 import android.com.crisbud.db.CSV_SAMPLE_NAME
 import android.com.crisbud.db.ExpenseCsvRow
-import android.com.crisbud.db.SqlFileActions
 import android.com.crisbud.db.StoredWallet
 import android.com.crisbud.db.readExpenseCsv
 import android.com.crisbud.db.rememberCsvFileActions
@@ -24,7 +23,6 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
-import androidx.compose.material.icons.rounded.FolderCopy
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.ImportExport
 import androidx.compose.material3.*
@@ -64,8 +62,6 @@ internal fun SettingsScreen(
     onRenameWallet: (String, String) -> Boolean,
     onDeleteWallet: (String) -> Boolean,
     onSetWalletBalance: (String, Double) -> Unit,
-    sql: () -> String,
-    onSqlImported: (String) -> Unit,
     csv: () -> String,
     onCsvImported: (List<ExpenseCsvRow>) -> Unit,
     onFileMessage: (String) -> Unit,
@@ -128,21 +124,7 @@ internal fun SettingsScreen(
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                SectionHeading("Data & backup")
-                Surface(color = colors.surfaceContainer, shape = MaterialTheme.shapes.extraLarge) {
-                    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.FolderCopy, null, tint = colors.primary)
-                            Text("SQL backup", style = MaterialTheme.typography.titleMedium)
-                        }
-                        Text(
-                            "Export a copy of your budget data. Importing a backup replaces the data on this device.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.onSurfaceVariant
-                        )
-                        SqlFileActions(sql, onSqlImported, onFileMessage)
-                    }
-                }
+                SectionHeading("Data")
                 Surface(color = colors.surfaceContainer, shape = MaterialTheme.shapes.extraLarge) {
                     Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -155,7 +137,7 @@ internal fun SettingsScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = colors.onSurfaceVariant
                         )
-                        BackupActions(onExport = csvFiles.export, onImport = csvFiles.importExpenses)
+                        CsvActions(onExport = csvFiles.export, onImport = csvFiles.importExpenses)
                         TextButton(onClick = csvFiles.downloadSample, enabled = csvSample != null) {
                             Text("Download sample CSV")
                         }
@@ -303,7 +285,7 @@ private fun WalletArt() {
 }
 
 @Composable
-internal fun BackupActions(onExport: () -> Unit, onImport: () -> Unit) {
+private fun CsvActions(onExport: () -> Unit, onImport: () -> Unit) {
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),

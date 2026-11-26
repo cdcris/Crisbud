@@ -117,8 +117,6 @@ fun CrisbudApp() {
                             onRenameWallet = { old, new -> repository.renameWallet(old, new).also { if (it) revision++ } },
                             onDeleteWallet = { name -> repository.deleteWallet(name).also { if (it) revision++ } },
                             onSetWalletBalance = { name, amount -> repository.updateWalletBalance(name, amount); revision++ },
-                            sql = repository::exportSql,
-                            onSqlImported = { sql -> repository.importSql(sql); revision++ },
                             csv = repository::exportCsv,
                             onCsvImported = { rows ->
                                 repository.importCsv(rows)

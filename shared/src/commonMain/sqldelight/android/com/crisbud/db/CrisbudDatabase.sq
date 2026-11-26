@@ -53,8 +53,8 @@ WHERE :month IS NULL OR substr(e.date, 1, 7) = :month
 ORDER BY e.date DESC, e.id DESC;
 
 insertTransaction:
-INSERT INTO Entries(id, title, category_id, amount, kind, date, wallet_id, quantity)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO Entries(title, category_id, amount, kind, date, wallet_id, quantity)
+VALUES (?, ?, ?, ?, ?, ?, ?);
 
 updateTransaction:
 UPDATE Entries SET title = ?, category_id = ?, amount = ?, kind = ?, date = ?, wallet_id = ?, quantity = ? WHERE id = ?;
@@ -77,9 +77,6 @@ UPDATE Wallet SET balance = ? WHERE name = ?;
 ensureWallet:
 INSERT OR IGNORE INTO Wallet(name) VALUES (?);
 
-restoreWallet:
-INSERT INTO Wallet(name, balance) VALUES (?, ?);
-
 renameWallet:
 UPDATE Wallet SET name = ? WHERE name = ?;
 
@@ -98,9 +95,6 @@ SELECT id FROM Category WHERE name = ?;
 ensureCategory:
 INSERT OR IGNORE INTO Category(name, icon, kind) VALUES (?, ?, ?);
 
-restoreCategory:
-INSERT INTO Category(name, icon, kind) VALUES (?, ?, ?);
-
 updateCategory:
 UPDATE Category SET name = :name, icon = coalesce(:icon, icon) WHERE id = :id;
 
@@ -118,9 +112,6 @@ WHERE b.month = ? ORDER BY c.name, b.id;
 insertBudget:
 INSERT OR REPLACE INTO Budget(category_id, month, limit_amount) VALUES (?, ?, ?);
 
-restoreBudget:
-INSERT INTO Budget(id, category_id, month, limit_amount) VALUES (?, ?, ?, ?);
-
 updateBudget:
 UPDATE Budget SET category_id = ?, limit_amount = ? WHERE id = ?;
 
@@ -135,10 +126,6 @@ WHERE r.active = 1 ORDER BY r.due_day;
 insertRecurringItem:
 INSERT INTO RecurringItem(title, category_id, amount, due_day, cadence, active)
 VALUES (?, ?, ?, ?, ?, 1);
-
-restoreRecurringItem:
-INSERT INTO RecurringItem(id, title, category_id, amount, due_day, cadence, active)
-VALUES (?, ?, ?, ?, ?, ?, ?);
 
 updateRecurringItem:
 UPDATE RecurringItem SET title = ?, category_id = ?, amount = ?, due_day = ? WHERE id = ?;

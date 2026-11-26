@@ -4,7 +4,6 @@ import android.com.crisbud.db.BudgetRepository
 import android.com.crisbud.db.CrisbudDatabase
 import android.com.crisbud.db.RecordKind
 import android.com.crisbud.db.RecurringCadence
-import android.com.crisbud.db.SQL_BACKUP_HEADER
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import java.sql.SQLException
 import kotlin.test.Test
@@ -56,7 +55,7 @@ class DatabaseMigrationTest {
     }
 
     @Test
-    fun deletingCategoriesPreservesRecordsAndRoundTripsEmptyCategories() = withDatabase { driver ->
+    fun deletingCategoriesPreservesRecordsAndCsvKeepsTransactionsUncategorized() = withDatabase { driver ->
         CrisbudDatabase.Schema.create(driver)
         val repository = BudgetRepository(driver)
         repository.addWallet("Cash")
@@ -83,10 +82,6 @@ class DatabaseMigrationTest {
             repository.budgets("2026-11")
         )
 
-        val backup = repository.exportSql()
-        repository.importSql(backup)
-        assertEquals(backup, repository.exportSql())
-        assertTrue(repository.categories().isEmpty())
         assertTrue(repository.exportJson().contains("\"category\":null"))
 
         repository.importCsv(repository.exportCsv())
@@ -104,7 +99,7 @@ class DatabaseMigrationTest {
     }
 
     @Test
-    fun categoryIconEditsKeepLinksAndSurviveBackupRestore() = withDatabase { driver ->
+    fun categoryIconEditsKeepLinks() = withDatabase { driver ->
         CrisbudDatabase.Schema.create(driver)
         val repository = BudgetRepository(driver)
         repository.addCategory("Pets", CategoryIcon.Pets.id)
@@ -121,43 +116,10 @@ class DatabaseMigrationTest {
         assertTrue(repository.updateCategory("Pets", "Pet care", CategoryIcon.Health.id))
         assertTrue(repository.renameCategory("Food", "Meals"))
 
-        val backup = repository.exportSql()
-        repository.importSql(backup)
         assertEquals(mapOf("Meals" to "🍜", "Pet care" to CategoryIcon.Health.id), repository.categories().toMap())
         assertEquals("Pet care", repository.transactions().single().category)
         assertEquals("Pet care", repository.budgets("2026-11").single().category)
         assertEquals("Pet care", repository.recurring().single().category)
-    }
-
-    @Test
-    fun legacyBackupRestoresAndFailedReplacementRollsBack() = withDatabase { driver ->
-        CrisbudDatabase.Schema.create(driver)
-        val repository = BudgetRepository(driver)
-        repository.importSql(
-            """
-            $SQL_BACKUP_HEADER
-            INSERT INTO Entries(id, title, category, amount, income, date)
-            VALUES (8, 'Day''s pay; bonus', 'Income', 100, 1, '2026-11-20');
-            INSERT INTO RecurringItem(id, title, category, amount, due_day, cadence, active)
-            VALUES (9, 'Legacy plan', 'Subscriptions', 5, 15, 'Custom', 0);
-            """.trimIndent()
-        )
-        val backup = repository.exportSql()
-        assertTrue(backup.contains("'Custom', 0"))
-        assertEquals(RecordKind.INCOME, repository.transactions().single().kind)
-        assertEquals("Cash", repository.transactions().single().wallet)
-        assertEquals(1L, repository.transactions().single().quantity)
-
-        repository.importSql(backup)
-        assertEquals(backup, repository.exportSql())
-        assertFailsWith<SQLException> {
-            repository.importSql(backup.replace("COMMIT;", """
-                INSERT INTO Entries(id, title, category, amount, income, date)
-                VALUES (8, 'Duplicate', 'Other', 1, 0, '2026-11-20');
-                COMMIT;
-            """.trimIndent()))
-        }
-        assertEquals(backup, repository.exportSql())
     }
 
     @Test
@@ -249,7 +211,9 @@ class DatabaseMigrationTest {
         CrisbudDatabase.Schema.create(driver)
         val repository = BudgetRepository(driver)
         repository.seedIfNeeded("2026-11")
-        val sql = repository.exportSql()
+        val transactions = repository.transactions()
+        val categories = repository.categories()
+        val wallets = repository.walletBalances()
         val invalid = """
             title,category,amount,date,wallet,quantity
             Lunch,Meals,12.5,2026-11-25,New wallet,1
@@ -257,7 +221,6 @@ class DatabaseMigrationTest {
         """.trimIndent()
         val error = assertFailsWith<IllegalArgumentException> { repository.importCsv(invalid) }
         assertTrue(error.message.orEmpty().startsWith("CSV row 3: The unit price"))
-        assertEquals(sql, repository.exportSql())
         val quantityError = assertFailsWith<IllegalArgumentException> {
             repository.importCsv(invalid.replace("5e-324,2026-11-25,New wallet,2", "8.0,2026-11-25,New wallet,0"))
         }
@@ -265,7 +228,9 @@ class DatabaseMigrationTest {
         assertFailsWith<IllegalArgumentException> {
             repository.importCsv("title,category,amount,date,income\nSalary,Income,100,2026-11-25,1")
         }
-        assertEquals(sql, repository.exportSql())
+        assertEquals(transactions, repository.transactions())
+        assertEquals(categories, repository.categories())
+        assertEquals(wallets, repository.walletBalances())
     }
 
     @Test

@@ -1,7 +1,10 @@
 package android.com.crisbud
 
 import android.com.crisbud.db.BudgetRepository
+import android.com.crisbud.db.Category
 import android.com.crisbud.db.CrisbudDatabase
+import android.com.crisbud.db.Entries
+import android.com.crisbud.db.RecordKind
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import java.sql.SQLException
 import kotlin.test.Test
@@ -11,7 +14,7 @@ import kotlin.test.assertTrue
 
 class DatabaseResetTest {
     @Test
-    fun resetClearsAllRecordsAndAllowsNewEntries() = withSeededDatabase { _, repository ->
+    fun resetClearsAllRecordsAndAllowsNewEntries() = withSeededDatabase { driver, repository ->
         repository.addWallet("Savings")
         repository.updateWalletBalance("Savings", 500.0)
         repository.addBudget("Home", "2026-10", 250.0)
@@ -26,7 +29,9 @@ class DatabaseResetTest {
         assertTrue(repository.recurring().isEmpty())
         assertTrue(repository.categories().isEmpty())
         assertTrue(repository.walletBalances().isEmpty())
-        assertTrue(repository.exportSql().lineSequence().none { it.startsWith("INSERT INTO") })
+        val queries = CrisbudDatabase(driver, Category.Adapter(RecordKind.adapter), Entries.Adapter(RecordKind.adapter))
+            .crisbudDatabaseQueries
+        assertTrue(queries.exportRecurringItems().executeAsList().isEmpty())
 
         repository.addCategory("Travel")
         repository.addWallet("Cash")
@@ -36,7 +41,11 @@ class DatabaseResetTest {
 
     @Test
     fun failedResetPreservesAllRecords() = withSeededDatabase { driver, repository ->
-        val backup = repository.exportSql()
+        val transactions = repository.transactions()
+        val budgets = repository.budgets("2026-11")
+        val recurring = repository.recurring()
+        val categories = repository.categories()
+        val wallets = repository.walletBalances()
         driver.execute(null, """
             CREATE TRIGGER block_wallet_deletion BEFORE DELETE ON Wallet
             BEGIN
@@ -45,7 +54,11 @@ class DatabaseResetTest {
         """.trimIndent(), 0)
 
         assertFailsWith<SQLException> { repository.resetData() }
-        assertEquals(backup, repository.exportSql())
+        assertEquals(transactions, repository.transactions())
+        assertEquals(budgets, repository.budgets("2026-11"))
+        assertEquals(recurring, repository.recurring())
+        assertEquals(categories, repository.categories())
+        assertEquals(wallets, repository.walletBalances())
     }
 
     private fun withSeededDatabase(run: (JdbcSqliteDriver, BudgetRepository) -> Unit) {
