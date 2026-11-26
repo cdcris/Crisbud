@@ -62,6 +62,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -97,15 +98,6 @@ internal fun ActivityScreen(
         contentPadding = PaddingValues(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 32.dp)
     ) {
         item {
-            PageHeading("Activity") {
-                val count = entries.size
-                Text(
-                    if (count == 1) "1 entry" else "$count entries",
-                    color = colors.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
-            Spacer(Modifier.height(18.dp))
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -128,6 +120,15 @@ internal fun ActivityScreen(
                     onSelect = { selectedCategory = it }
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            val count = entries.size
+            Text(
+                if (count == 1) "1 entry" else "$count entries",
+                modifier = Modifier.fillMaxWidth(),
+                color = colors.onSurfaceVariant,
+                style = MaterialTheme.typography.labelLarge,
+                textAlign = TextAlign.End
+            )
             Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ActivityTotal(

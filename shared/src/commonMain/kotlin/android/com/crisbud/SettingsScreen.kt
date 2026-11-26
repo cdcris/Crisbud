@@ -95,7 +95,6 @@ internal fun SettingsScreen(
         contentPadding = PaddingValues(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 36.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        item { PageHeading("Settings") }
         item {
             WalletSummary(wallets, onClick = { managedList = ManagedList.Wallets })
         }

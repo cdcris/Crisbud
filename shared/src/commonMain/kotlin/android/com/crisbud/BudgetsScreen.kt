@@ -64,7 +64,6 @@ internal fun BudgetsScreen(
         contentPadding = PaddingValues(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { PageHeading("Budgets") }
         item {
             MonthlyBudgetSummary(
                 spent = budgets.sumOf { it.spent },

@@ -52,14 +52,12 @@ internal fun OverviewScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item {
-            PageHeading("Overview") {
-                Row(
-                    Modifier.background(colors.surfaceContainer, CircleShape).padding(horizontal = 11.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(Icons.Rounded.CalendarToday, null, Modifier.size(14.dp), tint = colors.onSurfaceVariant)
-                    Text(monthLabel(month), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-                }
+            Row(
+                Modifier.background(colors.surfaceContainer, CircleShape).padding(horizontal = 11.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(Icons.Rounded.CalendarToday, null, Modifier.size(14.dp), tint = colors.onSurfaceVariant)
+                Text(monthLabel(month), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
             }
         }
         item {
