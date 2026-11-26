@@ -117,7 +117,12 @@ fun CrisbudApp() {
                                 repository.importCsv(csv)
                                 revision++
                             },
-                            onFileMessage = { fileMessage = it }
+                            onFileMessage = { fileMessage = it },
+                            onResetData = {
+                                val result = runCatching { repository.resetData() }
+                                if (result.isSuccess) revision++
+                                result.isSuccess
+                            }
                         )
                     }
                 }

@@ -170,6 +170,10 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
         BackupTable.ENTRIES, BackupTable.BUDGET, BackupTable.RECURRINGITEM, BackupTable.CATEGORY, BackupTable.WALLET
     )
 
+    fun resetData() = database.transaction {
+        backupClearOrder.forEach(::clearBackupTable)
+    }
+
     private fun forEachBackupRow(emit: (BackupTable, List<Any>) -> Unit) {
         q.selectCategories().executeAsList().forEach {
             emit(BackupTable.CATEGORY, listOf(it.name, it.icon, it.kind.code))

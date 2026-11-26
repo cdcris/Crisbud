@@ -35,6 +35,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import org.jetbrains.compose.resources.ExperimentalResourceApi
@@ -63,9 +66,12 @@ internal fun SettingsScreen(
     onSqlImported: (String) -> Unit,
     csv: () -> String,
     onCsvImported: (String) -> Unit,
-    onFileMessage: (String) -> Unit
+    onFileMessage: (String) -> Unit,
+    onResetData: () -> Boolean
 ) {
     var managedList by rememberSaveable { mutableStateOf<ManagedList?>(null) }
+    var showResetConfirmation by rememberSaveable { mutableStateOf(false) }
+    var resetSucceeded by remember { mutableStateOf<Boolean?>(null) }
     val csvSample by produceState<String?>(null) {
         value = Res.readBytes("files/$CSV_SAMPLE_NAME").decodeToString()
     }
@@ -145,8 +151,44 @@ internal fun SettingsScreen(
                         }
                     }
                 }
+                Surface(color = colors.surfaceContainer, shape = MaterialTheme.shapes.extraLarge) {
+                    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Permanently clear all budget data on this device.", style = MaterialTheme.typography.bodyMedium)
+                        OutlinedButton(
+                            onClick = {
+                                resetSucceeded = null
+                                showResetConfirmation = true
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.error)
+                        ) {
+                            Text("Reset data")
+                        }
+                        resetSucceeded?.let { succeeded ->
+                            Text(
+                                if (succeeded) "Data reset complete." else "Couldn’t reset data. Try again.",
+                                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (succeeded) colors.onSurfaceVariant else colors.error
+                            )
+                        }
+                    }
+                }
             }
         }
+    }
+
+    if (showResetConfirmation) {
+        ConfirmDestructiveAction(
+            title = "Reset all data?",
+            message = "This will permanently delete all transactions, budgets, recurring items, categories, and wallets " +
+                "on this device. This action cannot be undone.",
+            actionLabel = "Reset data",
+            onDismiss = { showResetConfirmation = false },
+            onConfirm = {
+                showResetConfirmation = false
+                resetSucceeded = onResetData()
+            }
+        )
     }
 
     when (managedList) {
