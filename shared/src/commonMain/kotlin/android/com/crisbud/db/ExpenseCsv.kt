@@ -13,7 +13,7 @@ internal fun StringBuilder.appendExpenseCsvHeader() {
 internal fun StringBuilder.appendExpenseCsvRow(expense: StoredTransaction) {
     val lineTotal = expense.amount * expense.quantity
     appendCsvRow(listOf(
-        expense.title, expense.category, lineTotal.toString(), expense.date,
+        expense.title, expense.category.orEmpty(), lineTotal.toString(), expense.date,
         expense.wallet, expense.quantity.toString()
     ))
 }
@@ -30,7 +30,7 @@ private fun StringBuilder.appendCsvRow(fields: List<String>) {
 internal data class ExpenseCsvRow(
     val number: Int,
     val title: String,
-    val category: String,
+    val category: String?,
     val lineTotal: Double,
     val date: String,
     val wallet: String,
@@ -67,7 +67,8 @@ internal fun readExpenseCsv(csv: String): List<ExpenseCsvRow> {
             "CSV row $number must have a whole number for quantity."
         }
         require(quantity > 0) { "CSV row $number: Quantity must be a positive whole number." }
-        ExpenseCsvRow(number, required("title"), required("category"), lineTotal, date, wallet, quantity)
+        val category = values.getValue("category").takeUnless { it.isBlank() }
+        ExpenseCsvRow(number, required("title"), category, lineTotal, date, wallet, quantity)
     }
 }
 

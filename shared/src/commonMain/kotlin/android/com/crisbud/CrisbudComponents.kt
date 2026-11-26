@@ -71,7 +71,7 @@ internal fun SectionHeading(title: String, actionLabel: String? = null, onAction
 private data class CategoryStyle(val icon: ImageVector, val shape: Shape, val background: Color, val foreground: Color)
 
 @Composable
-private fun categoryStyle(symbol: String?, category: String): CategoryStyle {
+private fun categoryStyle(symbol: String?, category: String?): CategoryStyle {
     val colors = MaterialTheme.colorScheme
     val flower = RoundedCornerShape(topStartPercent = 48, topEndPercent = 48, bottomStartPercent = 22, bottomEndPercent = 48)
     return when (symbol ?: category) {
@@ -86,8 +86,9 @@ private fun categoryStyle(symbol: String?, category: String): CategoryStyle {
 }
 
 @Composable
-internal fun CategoryBadge(category: String, modifier: Modifier = Modifier) {
-    val symbol = LocalCategoryIcons.current[category]
+internal fun CategoryBadge(category: String?, modifier: Modifier = Modifier) {
+    val icons = LocalCategoryIcons.current
+    val symbol = category?.let { icons[it] }
     val style = categoryStyle(symbol, category)
     Box(modifier.size(42.dp).background(style.background, style.shape), contentAlignment = Alignment.Center) {
         if (symbol != null && symbol.isNotBlank() && symbol !in knownCategorySymbols) {
@@ -176,7 +177,13 @@ internal fun EntrySheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ChoiceField(label: String, value: String, options: List<String>, onSelect: (String) -> Unit) {
+internal fun ChoiceField(
+    label: String,
+    value: String,
+    options: List<String>,
+    onClear: (() -> Unit)? = null,
+    onSelect: (String) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it && options.isNotEmpty() }) {
         OutlinedTextField(
@@ -186,6 +193,16 @@ internal fun ChoiceField(label: String, value: String, options: List<String>, on
             shape = MaterialTheme.shapes.medium
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (onClear != null) {
+                DropdownMenuItem(
+                    text = { Text("No category") },
+                    trailingIcon = { if (value.isEmpty()) Icon(Icons.Rounded.Check, null) },
+                    onClick = {
+                        onClear()
+                        expanded = false
+                    }
+                )
+            }
             options.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(option) },

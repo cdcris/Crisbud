@@ -52,10 +52,10 @@ internal fun BudgetsScreen(
     recurring: List<Recurring>,
     categories: List<Pair<String, String>>,
     onAddBudget: (String, Double) -> Unit,
-    onEditBudget: (Long, String, Double) -> Unit,
+    onEditBudget: (Long, String?, Double) -> Unit,
     onDeleteBudget: (Long) -> Unit,
-    onAddRecurring: (String, String, Double, Long) -> Unit,
-    onEditRecurring: (Long, String, String, Double, Long) -> Unit,
+    onAddRecurring: (String, String?, Double, Long) -> Unit,
+    onEditRecurring: (Long, String, String?, Double, Long) -> Unit,
     onDeleteRecurring: (Long) -> Unit
 ) {
     var dialog by remember { mutableStateOf<PlanDialog?>(null) }
@@ -79,7 +79,7 @@ internal fun BudgetsScreen(
         }
         items(budgets, key = { "budget-${it.id}" }) { budget ->
             RecordActions(
-                label = "${budget.category} budget",
+                label = budget.recordLabel,
                 onEdit = { dialog = PlanDialog.BudgetForm(budget) },
                 onDelete = { dialog = PlanDialog.DeleteBudget(budget) }
             ) { actions -> BudgetCard(budget, actions) }
@@ -105,10 +105,11 @@ internal fun BudgetsScreen(
         is PlanDialog.BudgetForm -> {
             val budget = selection.budget
             val choices = if (budget == null) names else {
-                (listOf(budget.category) + names.filter { name -> budgets.none { it.category == name } }).distinct()
+                names.filter { name -> name == budget.category || budgets.none { it.category == name } }
             }
             BudgetEntrySheet(budget, choices, onDismiss = { dialog = null }) { category, amount ->
-                if (budget == null) onAddBudget(category, amount) else onEditBudget(budget.id, category, amount)
+                if (budget != null) onEditBudget(budget.id, category, amount)
+                else if (category != null) onAddBudget(category, amount)
                 dialog = null
             }
         }
@@ -121,7 +122,7 @@ internal fun BudgetsScreen(
                 dialog = null
             }
         }
-        is PlanDialog.DeleteBudget -> ConfirmDelete("${selection.budget.category} budget", { dialog = null }) {
+        is PlanDialog.DeleteBudget -> ConfirmDelete(selection.budget.recordLabel, { dialog = null }) {
             onDeleteBudget(selection.budget.id)
             dialog = null
         }
@@ -205,7 +206,7 @@ private fun BudgetCard(budget: Budget, actions: @Composable () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CategoryBadge(budget.category)
                 Column(Modifier.weight(1f)) {
-                    Text(budget.category, style = type.titleMedium)
+                    Text(budget.categoryLabel, style = type.titleMedium)
                     Text(
                         if (remaining < 0) "${money(-remaining)} over budget" else "${money(remaining)} left",
                         style = type.bodySmall,
@@ -256,7 +257,7 @@ private fun RecurringPaymentRow(item: Recurring, actions: @Composable () -> Unit
             }
             Column(Modifier.weight(1f)) {
                 Text(item.title, style = type.titleMedium)
-                Text(item.category, style = type.bodySmall, color = colors.onSurfaceVariant)
+                item.category?.let { Text(it, style = type.bodySmall, color = colors.onSurfaceVariant) }
                 Text(money(item.amount), style = type.labelLarge, color = colors.primary)
             }
             actions()
@@ -281,9 +282,11 @@ private fun BudgetEntrySheet(
     budget: Budget?,
     categories: List<String>,
     onDismiss: () -> Unit,
-    onSave: (String, Double) -> Unit
+    onSave: (String?, Double) -> Unit
 ) {
-    var category by rememberSaveable(budget?.id) { mutableStateOf(budget?.category ?: categories.firstOrNull().orEmpty()) }
+    var category by rememberSaveable(budget?.id) {
+        mutableStateOf(if (budget == null) categories.firstOrNull() else budget.category)
+    }
     var amount by rememberSaveable(budget?.id) { mutableStateOf(budget?.limit?.toString().orEmpty()) }
     val limit = amount.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
     EntrySheet(
@@ -291,9 +294,14 @@ private fun BudgetEntrySheet(
         onDismiss = onDismiss,
         actionLabel = "Save budget",
         onSave = { limit?.let { onSave(category, it) } },
-        saveEnabled = category.isNotBlank() && limit != null
+        saveEnabled = (category != null || budget != null) && limit != null
     ) {
-        ChoiceField("Category", category, categories) { category = it }
+        val clearCategory: (() -> Unit)? = if (budget != null) {
+            { category = null }
+        } else {
+            null
+        }
+        ChoiceField("Category", category.orEmpty(), categories, onClear = clearCategory) { category = it }
         PlanAmountField("Monthly limit", amount) { amount = it }
     }
 }
@@ -303,10 +311,12 @@ private fun RecurringEntrySheet(
     item: Recurring?,
     categories: List<String>,
     onDismiss: () -> Unit,
-    onSave: (String, String, Double, Long) -> Unit
+    onSave: (String, String?, Double, Long) -> Unit
 ) {
     var title by rememberSaveable(item?.id) { mutableStateOf(item?.title.orEmpty()) }
-    var category by rememberSaveable(item?.id) { mutableStateOf(item?.category ?: categories.firstOrNull().orEmpty()) }
+    var category by rememberSaveable(item?.id) {
+        mutableStateOf(if (item == null) categories.firstOrNull() else item.category)
+    }
     var amount by rememberSaveable(item?.id) { mutableStateOf(item?.amount?.toString().orEmpty()) }
     var day by rememberSaveable(item?.id) { mutableStateOf(item?.dueDay?.toString() ?: "1") }
     val value = amount.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
@@ -316,7 +326,7 @@ private fun RecurringEntrySheet(
         onDismiss = onDismiss,
         actionLabel = "Save payment",
         onSave = { if (value != null && due != null) onSave(title.trim(), category, value, due) },
-        saveEnabled = title.isNotBlank() && category.isNotBlank() && value != null && due != null
+        saveEnabled = title.isNotBlank() && value != null && due != null
     ) {
         OutlinedTextField(
             value = title,
@@ -326,7 +336,7 @@ private fun RecurringEntrySheet(
             singleLine = true,
             shape = MaterialTheme.shapes.medium
         )
-        ChoiceField("Category", category, categories) { category = it }
+        ChoiceField("Category", category.orEmpty(), categories, onClear = { category = null }) { category = it }
         PlanAmountField("Amount", amount) { amount = it }
         OutlinedTextField(
             value = day,

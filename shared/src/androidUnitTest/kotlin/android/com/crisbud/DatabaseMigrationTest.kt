@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DatabaseMigrationTest {
@@ -43,11 +44,63 @@ class DatabaseMigrationTest {
         assertEquals("Meals", repository.budgets("2026-11").single().category)
         assertEquals(12.5, repository.budgets("2026-11").single().spent)
         assertEquals(RecurringCadence.MONTHLY, repository.recurring().single().cadence)
-        assertFalse(repository.deleteCategory("Subscriptions"))
+        assertTrue(repository.deleteCategory("Subscriptions"))
+        assertNull(repository.recurring().single().category)
+        assertTrue(repository.deleteCategory("Meals"))
+        assertNull(repository.transactions().single().category)
+        assertNull(repository.budgets("2026-11").single().category)
         assertFalse(repository.deleteWallet("Pocket"))
         assertFailsWith<SQLException> {
             driver.execute(null, "UPDATE Entries SET category_id = -1", 0)
         }
+    }
+
+    @Test
+    fun deletingCategoriesPreservesRecordsAndRoundTripsEmptyCategories() = withDatabase { driver ->
+        CrisbudDatabase.Schema.create(driver)
+        val repository = BudgetRepository(driver)
+        repository.addWallet("Cash")
+        repository.addCategory("Food")
+        repository.addCategory("Transport")
+        repository.addTransaction("Lunch", "Food", 12.5, false, "2026-11-20", "Cash", quantity = 2)
+        repository.addBudget("Food", "2026-10", 50.0)
+        repository.addBudget("Food", "2026-11", 100.0)
+        repository.addBudget("Transport", "2026-11", 75.0)
+        repository.addRecurring("Meal plan", "Food", 25.0, 5)
+
+        val transaction = repository.transactions().single()
+        val payment = repository.recurring().single()
+        val octoberBudget = repository.budgets("2026-10").single()
+        val novemberBudgets = repository.budgets("2026-11")
+        assertTrue(repository.deleteCategory("Food"))
+        assertTrue(repository.deleteCategory("Transport"))
+        assertTrue(repository.categories().isEmpty())
+        assertEquals(transaction.copy(category = null), repository.transactions().single())
+        assertEquals(payment.copy(category = null), repository.recurring().single())
+        assertEquals(octoberBudget.copy(category = null), repository.budgets("2026-10").single())
+        assertEquals(
+            novemberBudgets.map { it.copy(category = null, spent = 0.0) },
+            repository.budgets("2026-11")
+        )
+
+        val backup = repository.exportSql()
+        repository.importSql(backup)
+        assertEquals(backup, repository.exportSql())
+        assertTrue(repository.categories().isEmpty())
+        assertTrue(repository.exportJson().contains("\"category\":null"))
+
+        repository.importCsv(repository.exportCsv())
+        assertEquals(2, repository.transactions().size)
+        assertTrue(repository.transactions().all { it.category == null && it.quantity == 2L })
+        assertTrue(repository.categories().isEmpty())
+
+        repository.addCategory("Meals")
+        repository.updateTransaction(
+            transaction.id, transaction.title, "Meals", transaction.amount,
+            transaction.income, transaction.date, transaction.wallet, transaction.quantity
+        )
+        repository.updateBudget(novemberBudgets.first().id, "Meals", 100.0)
+        assertEquals(25.0, repository.budgets("2026-11").single { it.category == "Meals" }.spent)
     }
 
     @Test

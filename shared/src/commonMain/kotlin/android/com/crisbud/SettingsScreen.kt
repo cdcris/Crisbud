@@ -238,7 +238,7 @@ internal fun SettingsScreen(
                 }
             },
             onDelete = { name ->
-                if (onDeleteCategory(name)) null else "A transaction, budget, or recurring item still uses this category."
+                if (onDeleteCategory(name)) null else "This category could not be deleted."
             }
         )
         null -> Unit
@@ -425,10 +425,21 @@ private fun ManageRecords(
         }
     }
     pendingDelete?.let { name ->
-        ConfirmDelete(label = name, onDismiss = { pendingDelete = null }, onDelete = {
+        val delete = {
             deleteMessage = onDelete(name)
             pendingDelete = null
-        })
+        }
+        if (list == ManagedList.Categories) {
+            ConfirmDestructiveAction(
+                title = "Delete $name?",
+                message = "This clears the category from linked transactions, budgets, and recurring payments. Those records will stay in Crisbud.",
+                actionLabel = "Delete",
+                onDismiss = { pendingDelete = null },
+                onConfirm = delete
+            )
+        } else {
+            ConfirmDelete(label = name, onDismiss = { pendingDelete = null }, onDelete = delete)
+        }
     }
 }
 

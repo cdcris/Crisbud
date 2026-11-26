@@ -26,7 +26,7 @@ private enum class Screen(val title: String, val icon: ImageVector) {
 internal data class Transaction(
     val id: Long,
     val title: String,
-    val category: String,
+    val category: String?,
     val unitAmount: Double,
     val income: Boolean,
     val date: String,
@@ -36,10 +36,12 @@ internal data class Transaction(
 ) {
     val totalAmount: Double get() = unitAmount * quantity
 }
-internal data class Budget(val id: Long, val category: String, val spent: Double, val limit: Double) {
+internal data class Budget(val id: Long, val category: String?, val spent: Double, val limit: Double) {
+    val categoryLabel: String get() = category ?: "No category"
+    val recordLabel: String get() = category?.let { "$it budget" } ?: "budget without a category"
     val utilization: Double get() = if (limit > 0.0) spent / limit else 0.0
 }
-internal data class Recurring(val id: Long, val title: String, val category: String, val amount: Double, val dueDay: Long)
+internal data class Recurring(val id: Long, val title: String, val category: String?, val amount: Double, val dueDay: Long)
 
 @Composable
 fun CrisbudApp() {

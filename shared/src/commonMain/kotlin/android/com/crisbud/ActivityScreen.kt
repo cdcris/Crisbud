@@ -67,6 +67,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 private const val ALL_TIME = "All time"
+private const val NO_CATEGORY = ""
 
 @Composable
 internal fun ActivityScreen(
@@ -86,10 +87,15 @@ internal fun ActivityScreen(
     val periods = listOf(ALL_TIME) + months
     val activePeriod = selectedPeriod?.takeIf { it in periods }
         ?: transactions.firstOrNull()?.date?.take(7) ?: month
-    val activeCategory = selectedCategory?.takeIf { it in categories }
+    val categoryOptions = categories.filter { it.isNotBlank() }
+    val activeCategory = selectedCategory?.takeIf { it == NO_CATEGORY || it in categoryOptions }
     val entries = transactions.filter { entry ->
         (activePeriod == ALL_TIME || entry.date.startsWith(activePeriod)) &&
-            (activeCategory == null || entry.category == activeCategory)
+            when (activeCategory) {
+                null -> true
+                NO_CATEGORY -> entry.category.isNullOrBlank()
+                else -> entry.category == activeCategory
+            }
     }
     val colors = MaterialTheme.colorScheme
 
@@ -113,8 +119,14 @@ internal fun ActivityScreen(
                 )
                 ActivityFilterPicker(
                     selected = activeCategory,
-                    options = listOf(null) + categories,
-                    label = { it ?: "All categories" },
+                    options = listOf(null, NO_CATEGORY) + categoryOptions,
+                    label = {
+                        when (it) {
+                            null -> "All categories"
+                            NO_CATEGORY -> "No category"
+                            else -> it
+                        }
+                    },
                     description = "Category filter",
                     modifier = Modifier.weight(1f),
                     onSelect = { selectedCategory = it }
@@ -158,6 +170,7 @@ internal fun ActivityScreen(
                         Icon(Icons.AutoMirrored.Rounded.ReceiptLong, null, tint = colors.primary)
                         Text(
                             when {
+                                activeCategory == NO_CATEGORY -> "No transactions without a category"
                                 activeCategory != null -> "No transactions match this category"
                                 activePeriod == ALL_TIME -> "No transactions"
                                 else -> "No transactions this month"
@@ -276,7 +289,7 @@ private fun LedgerRow(item: Transaction, shape: Shape, actions: (@Composable () 
     val amountColor = if (item.income) colors.primary else colors.onSurface
     val details = buildList {
         if (!item.income && item.quantity > 1) add("Qty ${item.quantity}")
-        add(item.category)
+        item.category?.let { add(it) }
         add(item.wallet)
         if (actions == null) add(if (item.day == "Today") "Today" else activityDate(item.date))
     }.filter(String::isNotBlank).joinToString(" · ")
@@ -341,7 +354,10 @@ private fun TransactionForm(
     var income by rememberSaveable(entry?.id) { mutableStateOf(entry?.income ?: false) }
     var date by rememberSaveable(entry?.id) { mutableStateOf(entry?.date ?: currentIsoDate()) }
     var category by rememberSaveable(entry?.id) {
-        mutableStateOf(entry?.category ?: categories.firstOrNull { it == "Food & Drink" } ?: categories.firstOrNull().orEmpty())
+        mutableStateOf(
+            if (entry != null) entry.category
+            else categories.firstOrNull { it == "Food & Drink" } ?: categories.firstOrNull()
+        )
     }
     var wallet by rememberSaveable(entry?.id) { mutableStateOf(entry?.wallet ?: wallets.firstOrNull().orEmpty()) }
     var showDatePicker by rememberSaveable { mutableStateOf(false) }
@@ -350,13 +366,14 @@ private fun TransactionForm(
     val total = if (value != null && quantity != null) value * quantity else null
     val totalTooLarge = total?.isFinite() == false
     val millis = remember(date) { epochMillisFromIsoDate(date) }
+    val categoryIsValid = category?.let { it in categories } ?: true
 
     EntrySheet(
         title = if (entry == null) "New transaction" else "Edit transaction",
         onDismiss = onDismiss,
         actionLabel = if (entry == null) "Add transaction" else "Save changes",
         saveEnabled = title.isNotBlank() && total != null && !totalTooLarge &&
-            millis != null && category in categories && wallet in wallets,
+            millis != null && categoryIsValid && wallet in wallets,
         onSave = {
             if (value != null && quantity != null && !totalTooLarge) {
                 onSave(Transaction(entry?.id ?: 0L, title.trim(), category, value, income, date, wallet, date, quantity))
@@ -410,7 +427,7 @@ private fun TransactionForm(
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth()
         )
-        ChoiceField(label = "Category", value = category, options = categories, onSelect = { category = it })
+        ChoiceField("Category", category.orEmpty(), categories, onClear = { category = null }) { category = it }
         ChoiceField(label = "Wallet", value = wallet, options = wallets, onSelect = { wallet = it })
         OutlinedButton(
             onClick = { showDatePicker = true }, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),

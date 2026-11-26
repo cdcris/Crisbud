@@ -153,7 +153,7 @@ private fun BudgetSnapshot(budget: Budget, modifier: Modifier, onOpen: () -> Uni
                 Text("${(progress * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge, color = barColor)
             }
             Spacer(Modifier.height(10.dp))
-            Text(budget.category, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(budget.categoryLabel, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
                 if (balance < 0) "${money(-balance)} over" else "${money(balance)} left",
                 style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant

@@ -16,7 +16,7 @@ CREATE TABLE Wallet (
 CREATE TABLE Entries (
   id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
-  category_id INTEGER NOT NULL REFERENCES Category(id) ON DELETE RESTRICT,
+  category_id INTEGER REFERENCES Category(id) ON DELETE SET NULL,
   amount REAL NOT NULL,
   kind INTEGER AS RecordKind NOT NULL CHECK (kind IN (0, 1)),
   date TEXT NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE Entries (
 
 CREATE TABLE Budget (
   id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-  category_id INTEGER NOT NULL REFERENCES Category(id) ON DELETE RESTRICT,
+  category_id INTEGER REFERENCES Category(id) ON DELETE SET NULL,
   month TEXT NOT NULL,
   limit_amount REAL NOT NULL,
   UNIQUE(category_id, month)
@@ -35,7 +35,7 @@ CREATE TABLE Budget (
 CREATE TABLE RecurringItem (
   id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
-  category_id INTEGER NOT NULL REFERENCES Category(id) ON DELETE RESTRICT,
+  category_id INTEGER REFERENCES Category(id) ON DELETE SET NULL,
   amount REAL NOT NULL,
   due_day INTEGER NOT NULL,
   cadence TEXT NOT NULL DEFAULT 'Monthly',
@@ -48,7 +48,7 @@ CREATE INDEX recurring_category ON RecurringItem(category_id);
 
 selectTransactions:
 SELECT e.id, e.title, c.name AS category, e.amount, e.kind, e.date, w.name AS wallet, e.quantity
-FROM Entries e JOIN Category c ON c.id = e.category_id JOIN Wallet w ON w.id = e.wallet_id
+FROM Entries e JOIN Wallet w ON w.id = e.wallet_id LEFT JOIN Category c ON c.id = e.category_id
 WHERE :month IS NULL OR substr(e.date, 1, 7) = :month
 ORDER BY e.date DESC, e.id DESC;
 
@@ -104,11 +104,6 @@ INSERT INTO Category(name, icon, kind) VALUES (?, ?, ?);
 renameCategory:
 UPDATE Category SET name = ? WHERE name = ?;
 
-categoryUsageCount:
-SELECT (SELECT COUNT(*) FROM Entries WHERE category_id = :id) +
-  (SELECT COUNT(*) FROM Budget WHERE category_id = :id) +
-  (SELECT COUNT(*) FROM RecurringItem WHERE category_id = :id) AS usage_count;
-
 deleteCategory:
 DELETE FROM Category WHERE id = ?;
 
@@ -117,8 +112,8 @@ SELECT b.id, c.name AS category, b.month, b.limit_amount,
   COALESCE((SELECT SUM(e.amount * e.quantity) FROM Entries e
     WHERE e.category_id = b.category_id AND e.kind = 0
       AND substr(e.date, 1, 7) = b.month), 0.0) AS spent
-FROM Budget b JOIN Category c ON c.id = b.category_id
-WHERE b.month = ? ORDER BY c.name;
+FROM Budget b LEFT JOIN Category c ON c.id = b.category_id
+WHERE b.month = ? ORDER BY c.name, b.id;
 
 insertBudget:
 INSERT OR REPLACE INTO Budget(category_id, month, limit_amount) VALUES (?, ?, ?);
@@ -134,7 +129,7 @@ DELETE FROM Budget WHERE id = ?;
 
 selectRecurringItems:
 SELECT r.id, r.title, c.name AS category, r.amount, r.due_day, r.cadence
-FROM RecurringItem r JOIN Category c ON c.id = r.category_id
+FROM RecurringItem r LEFT JOIN Category c ON c.id = r.category_id
 WHERE r.active = 1 ORDER BY r.due_day;
 
 insertRecurringItem:
@@ -153,11 +148,11 @@ UPDATE RecurringItem SET active = 0 WHERE id = ?;
 
 exportBudgets:
 SELECT b.id, c.name AS category, b.month, b.limit_amount
-FROM Budget b JOIN Category c ON c.id = b.category_id ORDER BY b.month, c.name;
+FROM Budget b LEFT JOIN Category c ON c.id = b.category_id ORDER BY b.month, c.name, b.id;
 
 exportRecurringItems:
 SELECT r.id, r.title, c.name AS category, r.amount, r.due_day, r.cadence, r.active
-FROM RecurringItem r JOIN Category c ON c.id = r.category_id ORDER BY r.id;
+FROM RecurringItem r LEFT JOIN Category c ON c.id = r.category_id ORDER BY r.id;
 
 clearEntries:
 DELETE FROM Entries;

@@ -14,6 +14,11 @@ internal sealed interface BackupStatement {
     data class Delete(val table: BackupTable) : BackupStatement
 
     data class Insert(val table: BackupTable, private val values: Map<String, String?>) : BackupStatement {
+        fun nullableText(column: String): String? {
+            require(column in values) { "Missing $column in the backup." }
+            return values[column]
+        }
+
         fun text(column: String, default: String? = null): String =
             if (column in values) requireNotNull(values[column]) { "$column must have a value." }
             else requireNotNull(default) { "Missing $column in the backup." }

@@ -5,7 +5,7 @@ import app.cash.sqldelight.db.SqlDriver
 data class StoredTransaction(
     val id: Long,
     val title: String,
-    val category: String,
+    val category: String?,
     val amount: Double,
     val kind: RecordKind,
     val date: String,
@@ -15,8 +15,8 @@ data class StoredTransaction(
     val income: Boolean get() = kind == RecordKind.INCOME
 }
 
-data class StoredBudget(val id: Long, val category: String, val spent: Double, val limit: Double)
-data class StoredRecurring(val id: Long, val title: String, val category: String, val amount: Double, val dueDay: Long, val cadence: RecurringCadence)
+data class StoredBudget(val id: Long, val category: String?, val spent: Double, val limit: Double)
+data class StoredRecurring(val id: Long, val title: String, val category: String?, val amount: Double, val dueDay: Long, val cadence: RecurringCadence)
 data class StoredWallet(val name: String, val balance: Double)
 
 class BudgetRepository internal constructor(driver: SqlDriver) {
@@ -55,7 +55,7 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
 
     fun addTransaction(
         title: String,
-        category: String,
+        category: String?,
         amount: Double,
         income: Boolean,
         date: String,
@@ -65,7 +65,7 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
         validateTransactionQuantity(quantity, amount, income)
         database.transaction {
             q.insertTransaction(
-                null, title, categoryId(category), amount, RecordKind.fromIncome(income), date, walletId(wallet), quantity
+                null, title, category?.let(::categoryId), amount, RecordKind.fromIncome(income), date, walletId(wallet), quantity
             )
         }
     }
@@ -75,7 +75,7 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
     fun updateTransaction(
         id: Long,
         title: String,
-        category: String,
+        category: String?,
         amount: Double,
         income: Boolean,
         date: String,
@@ -84,7 +84,7 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
     ) = database.transaction {
         validateTransactionQuantity(quantity, amount, income)
         q.updateTransaction(
-            title, categoryId(category), amount, RecordKind.fromIncome(income), date, walletId(wallet), quantity, id
+            title, category?.let(::categoryId), amount, RecordKind.fromIncome(income), date, walletId(wallet), quantity, id
         )
     }
 
@@ -121,7 +121,6 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
 
     fun deleteCategory(name: String): Boolean = database.transactionWithResult {
         val id = q.categoryId(name).executeAsOneOrNull() ?: return@transactionWithResult false
-        if (q.categoryUsageCount(id).executeAsOne() > 0) return@transactionWithResult false
         q.deleteCategory(id)
         true
     }
@@ -130,18 +129,18 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
         q.insertBudget(categoryId(category), month, limit)
     }
 
-    fun updateBudget(id: Long, category: String, limit: Double) = database.transaction {
-        q.updateBudget(categoryId(category), limit, id)
+    fun updateBudget(id: Long, category: String?, limit: Double) = database.transaction {
+        q.updateBudget(category?.let(::categoryId), limit, id)
     }
 
     fun deleteBudget(id: Long) = q.deleteBudget(id)
 
-    fun addRecurring(title: String, category: String, amount: Double, dueDay: Long) = database.transaction {
-        q.insertRecurringItem(title, categoryId(category), amount, dueDay, RecurringCadence.MONTHLY.databaseValue)
+    fun addRecurring(title: String, category: String?, amount: Double, dueDay: Long) = database.transaction {
+        q.insertRecurringItem(title, category?.let(::categoryId), amount, dueDay, RecurringCadence.MONTHLY.databaseValue)
     }
 
-    fun updateRecurring(id: Long, title: String, category: String, amount: Double, dueDay: Long) = database.transaction {
-        q.updateRecurringItem(title, categoryId(category), amount, dueDay, id)
+    fun updateRecurring(id: Long, title: String, category: String?, amount: Double, dueDay: Long) = database.transaction {
+        q.updateRecurringItem(title, category?.let(::categoryId), amount, dueDay, id)
     }
 
     fun deleteRecurring(id: Long) = q.deleteRecurringItem(id)
@@ -158,11 +157,11 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
     }
 
     fun exportJson(): String = database.transactionWithResult {
-        val tx = transactions().joinToString(",") { "{\"title\":\"${escape(it.title)}\",\"category\":\"${escape(it.category)}\",\"amount\":${it.amount},\"income\":${it.income},\"date\":\"${it.date}\",\"wallet\":\"${escape(it.wallet)}\",\"quantity\":${it.quantity}}" }
+        val tx = transactions().joinToString(",") { "{\"title\":\"${escape(it.title)}\",\"category\":${jsonCategory(it.category)},\"amount\":${it.amount},\"income\":${it.income},\"date\":\"${it.date}\",\"wallet\":\"${escape(it.wallet)}\",\"quantity\":${it.quantity}}" }
         val cats = categories().joinToString(",") { "{\"name\":\"${escape(it.first)}\",\"icon\":\"${escape(it.second)}\"}" }
-        val recurringItems = q.exportRecurringItems().executeAsList().filter { it.active }.sortedBy { it.due_day }.joinToString(",") { "{\"title\":\"${escape(it.title)}\",\"category\":\"${escape(it.category)}\",\"amount\":${it.amount},\"dueDay\":${it.due_day},\"cadence\":\"${escape(it.cadence)}\"}" }
+        val recurringItems = q.exportRecurringItems().executeAsList().filter { it.active }.sortedBy { it.due_day }.joinToString(",") { "{\"title\":\"${escape(it.title)}\",\"category\":${jsonCategory(it.category)},\"amount\":${it.amount},\"dueDay\":${it.due_day},\"cadence\":\"${escape(it.cadence)}\"}" }
         val walletItems = walletBalances().joinToString(",") { "{\"name\":\"${escape(it.name)}\",\"balance\":${it.balance}}" }
-        val budgetItems = q.exportBudgets().executeAsList().joinToString(",") { "{\"category\":\"${escape(it.category)}\",\"month\":\"${it.month}\",\"limit\":${it.limit_amount}}" }
+        val budgetItems = q.exportBudgets().executeAsList().joinToString(",") { "{\"category\":${jsonCategory(it.category)},\"month\":\"${it.month}\",\"limit\":${it.limit_amount}}" }
         "{\"transactions\":[$tx],\"wallets\":[$walletItems],\"categories\":[$cats],\"budgets\":[$budgetItems],\"recurring\":[$recurringItems]}"
     }
 
@@ -174,7 +173,7 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
         backupClearOrder.forEach(::clearBackupTable)
     }
 
-    private fun forEachBackupRow(emit: (BackupTable, List<Any>) -> Unit) {
+    private fun forEachBackupRow(emit: (BackupTable, List<Any?>) -> Unit) {
         q.selectCategories().executeAsList().forEach {
             emit(BackupTable.CATEGORY, listOf(it.name, it.icon, it.kind.code))
         }
@@ -218,7 +217,9 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
                     val unitPrice = row.lineTotal / row.quantity
                     require(unitPrice > 0) { "The unit price is too small." }
                     validateTransactionQuantity(row.quantity, unitPrice, income = false)
-                    val category = categoryIds.resolveCsvReference(row.category, "category") { ensureCategory(it) }
+                    val category = row.category?.let { name ->
+                        categoryIds.resolveCsvReference(name, "category") { ensureCategory(it) }
+                    }
                     val wallet = walletIds.resolveCsvReference(row.wallet, "wallet") { name ->
                         q.ensureWallet(name)
                         walletId(name)
@@ -294,22 +295,30 @@ class BudgetRepository internal constructor(driver: SqlDriver) {
                 q.ensureWallet(wallet)
                 val kind = RecordKind.fromIncome(income)
                 q.insertTransaction(
-                    row.id(), row.text("title"), ensureCategory(row.text("category"), kind),
+                    row.id(), row.text("title"), row.nullableText("category")?.let { ensureCategory(it, kind) },
                     amount, kind, row.text("date"), walletId(wallet), quantity
                 )
             }
-            BackupTable.BUDGET -> q.restoreBudget(row.id(), ensureCategory(row.text("category")),
+            BackupTable.BUDGET -> q.restoreBudget(row.id(), row.nullableText("category")?.let { ensureCategory(it) },
                 row.text("month"), row.decimal("limit_amount"))
             BackupTable.RECURRINGITEM -> q.restoreRecurringItem(row.id(), row.text("title"),
-                ensureCategory(row.text("category")), row.decimal("amount"), row.integer("due_day"),
+                row.nullableText("category")?.let { ensureCategory(it) }, row.decimal("amount"), row.integer("due_day"),
                 row.text("cadence", "Monthly"), row.integer("active", "1") != 0L)
         }
     }
 
-    private fun StringBuilder.appendInsert(tableAndColumns: String, values: List<Any>) {
-        val literals = values.joinToString(", ") { if (it is String) "'${it.replace("'", "''")}'" else it.toString() }
+    private fun StringBuilder.appendInsert(tableAndColumns: String, values: List<Any?>) {
+        val literals = values.joinToString(", ") {
+            when (it) {
+                null -> "NULL"
+                is String -> "'${it.replace("'", "''")}'"
+                else -> it.toString()
+            }
+        }
         appendLine("INSERT INTO $tableAndColumns VALUES ($literals);")
     }
+
+    private fun jsonCategory(value: String?) = value?.let { "\"${escape(it)}\"" } ?: "null"
 
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 }
