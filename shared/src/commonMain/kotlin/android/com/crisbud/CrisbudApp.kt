@@ -50,10 +50,11 @@ fun CrisbudApp() {
     val repository = remember { BudgetRepository() }
     val today = remember { currentIsoDate() }
     val month = today.take(7)
-    LaunchedEffect(month) {
-        repository.seedIfNeeded(month)
-        revision++
-    }
+
+//    LaunchedEffect(month) {
+//        repository.seedIfNeeded(month)
+//        revision++
+//    }
 
     val categories = remember(revision) { repository.categories() }
     val walletBalances = remember(revision) { repository.walletBalances() }
